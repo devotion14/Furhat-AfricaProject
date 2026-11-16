@@ -1,7 +1,8 @@
 ﻿# Nuru (Light) - Furhat deployment
 
 **Culturally adapted non-verbal behaviours for equitable participation in high-ratio classrooms.**
-Luke Tsalwa · Celestino M.K. Kariuki · Devotha R. Lyakurwa — KTH Royal Institute of Technology
+Luke Tsalwa · Celestino M.K. Kariuki · Devotha R. Lyakurwa 
+KTH Royal Institute of Technology
 
 Nuru is a Furhat robot that moderates small-group discussions. It keeps track of how much each
 learner has spoken and invites quieter learners to contribute. The project tests whether the robot's
