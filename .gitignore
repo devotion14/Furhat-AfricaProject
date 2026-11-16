@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+results/
+results_sim/
+logs_sim/
+data/questionnaire.csv

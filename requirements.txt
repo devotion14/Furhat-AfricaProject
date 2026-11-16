@@ -1,0 +1,7 @@
+requests>=2.28
+flask>=3.0
+numpy>=1.24
+scipy>=1.10        # statistics and power analysis
+matplotlib>=3.7    # results figure
+sounddevice>=0.4   # optional: microphone VAD
+pytest>=7          # tests

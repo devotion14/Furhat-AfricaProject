@@ -1,0 +1,8 @@
+group,condition,seat,item,score
+G01,c1,A,fair_attention,
+G01,c1,A,felt_invited,
+G01,c1,A,felt_pressured,
+G01,c1,A,singled_out,
+G01,c1,A,appropriate,
+G01,c1,A,comfortable,
+G01,c1,A,respectful,

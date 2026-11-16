@@ -1,0 +1,69 @@
+{
+  "_comment": "Behaviour profiles for the three study conditions. C1 and C2 use IDENTICAL cue form and differ only in WHO is targeted (adaptivity). C2 and C3 use the IDENTICAL participation model and differ only in HOW the cue is expressed (cultural adaptation). Keep it that way so the contrasts stay clean. C3 values are Phase-1 hypotheses: replace them with the co-designed behaviour set.",
+
+  "c1": {
+    "label": "C1 Non-adaptive",
+    "description": "Gaze follows the speaker; attention and invitations cycle evenly through seats (round robin).",
+    "policy": "round_robin",
+    "idle_gaze": "cycle",
+    "group_glance_s": 0.0,
+    "pair_glance_s": 0.0,
+    "orient_fraction": 1.0,
+    "nod": null,
+    "smile": false,
+    "prompt_mode": "en",
+    "prompts": {
+      "en": ["What do you think?", "What is your view?", "Would you like to add something?"],
+      "sw": []
+    },
+    "gaze_hold_s": 3.0,
+    "gaze_during_wait": "individual",
+    "wait_s": 2.0,
+    "release": {"en": [], "sw": []},
+    "acknowledge_response": null
+  },
+
+  "c2": {
+    "label": "C2 Adaptive-conventional",
+    "description": "Same cue form as C1, but gaze, head and invitations are directed at the least active learner (Gillet et al. 2021).",
+    "policy": "least_active",
+    "idle_gaze": "least_active",
+    "group_glance_s": 0.0,
+    "pair_glance_s": 0.0,
+    "orient_fraction": 1.0,
+    "nod": null,
+    "smile": false,
+    "prompt_mode": "en",
+    "prompts": {
+      "en": ["What do you think?", "What is your view?", "Would you like to add something?"],
+      "sw": []
+    },
+    "gaze_hold_s": 3.0,
+    "gaze_during_wait": "individual",
+    "wait_s": 2.0,
+    "release": {"en": [], "sw": []},
+    "acknowledge_response": null
+  },
+
+  "c3": {
+    "label": "C3 Adaptive-Nuru",
+    "description": "Same participation model as C2, expressed through the culturally adapted cue set: group first, then neighbouring pair, short individual gaze with a soft nod, bilingual prompt, long wait with gaze returned to the group, gentle release, acknowledging nod.",
+    "policy": "least_active",
+    "idle_gaze": "group",
+    "group_glance_s": 1.0,
+    "pair_glance_s": 0.8,
+    "orient_fraction": 1.0,
+    "nod": "NuruSoftNod",
+    "smile": true,
+    "prompt_mode": "bilingual",
+    "prompts": {
+      "en": ["What do you think?", "Would you like to add something?", "What is your view?"],
+      "sw": ["Je, una maoni?", "Ungependa kuongeza kitu?", "Una maoni gani?"]
+    },
+    "gaze_hold_s": 1.5,
+    "gaze_during_wait": "group",
+    "wait_s": 4.0,
+    "release": {"en": ["That's okay, anyone can add."], "sw": ["Hakuna shida."]},
+    "acknowledge_response": "NuruSoftNod"
+  }
+}

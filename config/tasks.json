@@ -1,0 +1,46 @@
+{
+  "_comment": "Three discussion tasks of similar length and difficulty. The SAME script is used in every condition; only the robot's participation behaviour changes. Topics are open-ended (no right answer) so that every participant can contribute regardless of subject knowledge. Topic-to-condition pairing is counterbalanced by 'python -m nuru plan'.",
+
+  "greeting": {
+    "en": "Hello everyone, my name is Nuru. Today we will discuss a few questions together. There are no right or wrong answers, and you can always choose to pass.",
+    "sw": "Habari zenu! Karibuni."
+  },
+
+  "closing": {
+    "en": "Thank you all for sharing your ideas. Asanteni sana.",
+    "sw": ""
+  },
+
+  "tasks": {
+    "T1": {
+      "title": "School water project",
+      "intro": "Imagine your school has received money for one project to improve access to clean water.",
+      "questions": [
+        "Which project should the school choose, and why?",
+        "Who in the community should be involved in the decision?",
+        "What problems might the project face, and how could you solve them?",
+        "How would you know, after one year, that the project was a success?"
+      ]
+    },
+    "T2": {
+      "title": "Planning a class trip",
+      "intro": "Imagine your class can go on a one-day trip anywhere within your country.",
+      "questions": [
+        "Where should the class go, and why?",
+        "What should students learn during the trip?",
+        "How can the trip be made affordable for every family?",
+        "What rules should the class agree on before leaving?"
+      ]
+    },
+    "T3": {
+      "title": "A better school library",
+      "intro": "Imagine your school wants to make its library a place that more students use.",
+      "questions": [
+        "What would make students want to visit the library more often?",
+        "Which books or materials should be added first?",
+        "Should the library have books in local languages? Why or why not?",
+        "How could older students help younger students to read?"
+      ]
+    }
+  }
+}

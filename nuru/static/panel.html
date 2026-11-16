@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuru Operator</title>
+<style>
+  :root {
+    --bg: #f5f3ef; --panel: #ffffff; --ink: #1f2328; --muted: #6b7078; --line: #e2ded6;
+    --accent: #c46a1b; --speak: #1f8a4c; --invite: #d89b16; --danger: #b3261e; --c1: #5b6b7f; --c2: #2f6fb3; --c3: #c46a1b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 18px; background: #1f2328; color: #fff; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+  header h1 span { color: #f0a85a; }
+  .pill { padding: 3px 10px; border-radius: 99px; background: #333a42; font-size: 12px; }
+  .pill.on { background: var(--speak); } .pill.off { background: var(--danger); }
+  .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; padding: 14px 18px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  button { font: inherit; border: 1px solid var(--line); background: #faf9f7; padding: 7px 12px; border-radius: 7px; cursor: pointer; }
+  button:hover { border-color: #b9b2a6; }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  button.danger { background: var(--danger); color: #fff; border-color: var(--danger); font-weight: 600; }
+  button.big { padding: 12px 18px; font-size: 15px; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .seats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .seat { border: 2px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer; user-select: none; background: #fcfbf9; transition: border-color .1s, background .1s; }
+  .seat.speaking { border-color: var(--speak); background: #e9f6ee; }
+  .seat.inviting { border-color: var(--invite); background: #fdf5e1; }
+  .seat .id { font-size: 30px; font-weight: 700; }
+  .seat .key { float: right; color: var(--muted); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  .seat .meta { font-size: 12px; color: var(--muted); }
+  .bar { height: 8px; background: #eee9e1; border-radius: 4px; overflow: hidden; margin: 8px 0 4px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .stat { font-variant-numeric: tabular-nums; font-size: 12px; }
+  .seat .acts { margin-top: 8px; display: flex; gap: 4px; }
+  .seat .acts button { padding: 3px 7px; font-size: 12px; }
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .kpi { background: #faf9f7; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .kpi b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .kpi span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .cond { display: inline-block; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: #fff; }
+  .cond.c1 { background: var(--c1); } .cond.c2 { background: var(--c2); } .cond.c3 { background: var(--c3); }
+  ol.qs { margin: 6px 0 0; padding-left: 22px; } ol.qs li { margin: 3px 0; color: var(--muted); }
+  ol.qs li.done { text-decoration: line-through; } ol.qs li.now { color: var(--ink); font-weight: 600; }
+  .log { font: 12px/1.45 ui-monospace, Consolas, monospace; max-height: 230px; overflow: auto; background: #faf9f7; border-radius: 6px; padding: 6px 8px; }
+  .muted { color: var(--muted); } .warn { color: var(--danger); font-weight: 600; }
+  .keys { font-size: 12px; color: var(--muted); }
+  .keys kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: #fff; font-size: 11px; }
+  table.res { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+  table.res td, table.res th { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: right; }
+  table.res th:first-child, table.res td:first-child { text-align: left; }
+</style>
+</head>
+<body>
+<header>
+  <h1>NURU <span>·</span> Operator</h1>
+  <span id="robot" class="pill">robot …</span>
+  <span id="cond" class="pill">no condition</span>
+  <span id="timer" class="pill">00:00</span>
+  <span id="status" class="pill">idle</span>
+  <span class="spacer"></span>
+  <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="auto"> auto-invite</label>
+  <button class="danger" onclick="post('/api/stop')" title="Esc">STOP robot</button>
+</header>
+
+<main>
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <section>
+      <h2>Who is speaking? <span class="keys">— <kbd>1</kbd>–<kbd>4</kbd> or click a seat · <kbd>Space</kbd> silence · <kbd>I</kbd> invite · <kbd>N</kbd> next question</span></h2>
+      <div class="seats" id="seats"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="big" onclick="post('/api/silence')">Silence (Space)</button>
+        <button class="big primary" onclick="invite()">Invite next (I)</button>
+        <button onclick="post('/api/look/group')">Look at group</button>
+        <span id="silence" class="muted"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Live participation measures</h2>
+      <div class="kpis">
+        <div class="kpi"><b id="k-gt">–</b><span>Gini speaking time</span></div>
+        <div class="kpi"><b id="k-gn">–</b><span>Gini turns</span></div>
+        <div class="kpi"><b id="k-ls">–</b><span>Least-active share</span></div>
+        <div class="kpi"><b id="k-rr">–</b><span>Response rate</span></div>
+        <div class="kpi"><b id="k-lat">–</b><span>Mean latency (s)</span></div>
+        <div class="kpi"><b id="k-tt">–</b><span>Total turns</span></div>
+      </div>
+      <div id="results" style="margin-top:10px"></div>
+    </section>
+
+    <section>
+      <h2>Event log <span class="muted" id="logfile"></span></h2>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <section>
+      <h2>1 · Session</h2>
+      <div class="row">
+        Group <input id="group" value="G01" size="5">
+        <button onclick="loadPlan()">Load plan</button>
+        <button class="primary" id="btn-start" onclick="startSession()">Start session</button>
+        <button onclick="endSession()">End session</button>
+      </div>
+      <div class="row" id="metaRow"></div>
+      <div class="row">
+        <button onclick="post('/api/greet')">Greeting</button>
+        <button onclick="post('/api/closing')">Closing</button>
+        <button onclick="post('/api/calibrate/sweep')" title="Robot looks at each seat and says its letter">Check seat gaze</button>
+        <button onclick="calibFaces()" title="Seat positions from Furhat face tracking">Calibrate from faces</button>
+      </div>
+      <div id="sessmsg" class="muted"></div>
+    </section>
+
+    <section>
+      <h2>2 · Condition blocks</h2>
+      <div id="blocks"></div>
+      <div class="row">
+        <button onclick="post('/api/condition/end')">End condition</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>3 · Discussion script <span id="taskTitle" class="muted"></span></h2>
+      <div class="row"><button class="primary" onclick="nextQ()">Next question (N)</button></div>
+      <ol class="qs" id="qs"></ol>
+    </section>
+
+    <section>
+      <h2>Say / note</h2>
+      <div class="row">
+        <input id="sayText" placeholder="Free text for the robot" style="flex:1">
+        <select id="sayLang"><option value="en">English</option><option value="sw">Kiswahili</option></select>
+        <button onclick="say()">Say</button>
+      </div>
+      <div class="row">
+        <input id="noteText" placeholder="Observation note (logged, not spoken)" style="flex:1">
+        <button onclick="note()">Log note</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+let INFO = null, STATE = {};
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 2) => (v === null || v === undefined) ? '–' : Number(v).toFixed(d);
+
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok && j.error) $('sessmsg').innerHTML = '<span class="warn">' + j.error + ' — start a session first.</span>';
+  return j;
+}
+const invite = seat => post('/api/invite', seat ? {seat} : {});
+const nextQ = () => post('/api/question/next');
+function say() { post('/api/say', {text: $('sayText').value, lang: $('sayLang').value}); $('sayText').value = ''; }
+function note() { post('/api/note', {text: $('noteText').value}); $('noteText').value = ''; }
+
+async function init() {
+  INFO = await (await fetch('/api/info')).json();
+  $('robot').textContent = 'robot ' + INFO.robot + (INFO.robot_online ? ' ✓' : ' ✗');
+  $('robot').className = 'pill ' + (INFO.robot_online ? 'on' : 'off');
+  $('metaRow').innerHTML = 'Usual participation (self-report): ' + INFO.seats.map(s =>
+    `${s} <select id="meta-${s}"><option>average</option><option>quiet</option><option>active</option></select>`).join(' ');
+  $('seats').innerHTML = INFO.seats.map((s, i) => `
+    <div class="seat" id="seat-${s}" onclick="post('/api/speak/${s}')">
+      <span class="key">${i + 1}</span><div class="id">${s}</div>
+      <div class="meta" id="meta-label-${s}"></div>
+      <div class="bar"><i id="bar-${s}" style="width:0"></i></div>
+      <div class="stat" id="stat-${s}">0.0 s · 0 turns</div>
+      <div class="acts">
+        <button onclick="event.stopPropagation(); invite('${s}')">invite</button>
+        <button onclick="event.stopPropagation(); post('/api/look/${s}')">look</button>
+      </div>
+    </div>`).join('');
+  loadPlan();
+  setInterval(poll, 300);
+}
+
+async function loadPlan() {
+  const p = await (await fetch('/api/plan?group=' + encodeURIComponent($('group').value))).json();
+  const opts = Object.entries(INFO.tasks).map(([k, t]) => `<option value="${k}">${k} · ${t}</option>`).join('');
+  $('blocks').innerHTML = (p.blocks || []).map(b => `
+    <div class="row">
+      <b>Block ${b.position}</b>
+      <span class="cond ${b.condition}">${b.condition.toUpperCase()}</span>
+      <select id="task-${b.position}">${opts}</select>
+      <button class="primary" onclick="startCond('${b.condition}', ${b.position})">Start ${b.condition.toUpperCase()}</button>
+      <span class="muted">${INFO.conditions[b.condition] || ''}</span>
+    </div>`).join('') || '<span class="muted">No plan for this group id (use G01, G02, …)</span>';
+  (p.blocks || []).forEach(b => $('task-' + b.position).value = b.task);
+}
+
+function startCond(c, pos) { post('/api/condition/start', {condition: c, task: $('task-' + pos).value}); }
+
+async function startSession() {
+  const meta = {}; INFO.seats.forEach(s => meta[s] = $('meta-' + s).value);
+  const j = await post('/api/session/start', {group: $('group').value, meta});
+  $('sessmsg').textContent = j.ok ? 'Logging to ' + j.log : '';
+}
+async function endSession() {
+  if (!STATE.session) return;
+  await post('/api/session/end'); $('sessmsg').textContent = 'Session ended and saved.';
+}
+async function calibFaces() {
+  const j = await post('/api/calibrate/faces');
+  $('sessmsg').innerHTML = j.ok ? 'Seats calibrated and saved: ' + JSON.stringify(j.seats) : '<span class="warn">' + (j.error || 'failed') + '</span>';
+}
+
+$('auto').addEventListener('change', e => post('/api/auto', {on: e.target.checked}));
+
+async function poll() {
+  let s;
+  try { s = await (await fetch('/api/state')).json(); } catch (e) { $('status').textContent = 'panel offline'; return; }
+  STATE = s;
+  if (!s.session) { $('cond').textContent = 'no session'; return; }
+  const m = s.metrics;
+  $('cond').innerHTML = s.condition ? s.profile : 'between conditions';
+  $('cond').className = 'pill' + (s.condition ? ' on' : '');
+  const el = Math.floor(s.elapsed_s); $('timer').textContent = String(Math.floor(el / 60)).padStart(2, '0') + ':' + String(el % 60).padStart(2, '0');
+  $('status').textContent = s.inviting ? 'inviting ' + s.inviting : s.status;
+  $('auto').checked = s.auto;
+  const tot = Math.max(1, ...Object.values(m.speaking_time_s));
+  s.seats.forEach(id => {
+    const tile = $('seat-' + id);
+    tile.className = 'seat' + (s.current === id ? ' speaking' : '') + ((s.inviting === id || s.pending === id) ? ' inviting' : '');
+    $('bar-' + id).style.width = (100 * m.speaking_time_s[id] / tot) + '%';
+    $('stat-' + id).textContent = `${fmt(m.speaking_time_s[id], 1)} s · ${m.turns[id]} turns · inv ${m.invitations[id]}/${m.responses[id]}`
+      + (s.mic_db ? ` · ${s.mic_db[id]} dB` : '');
+    $('meta-label-' + id).textContent = s.meta[id] || '';
+  });
+  $('silence').textContent = s.current ? '' : 'silence ' + fmt(s.silence_s, 0) + ' s';
+  $('k-gt').textContent = fmt(m.gini_time, 3); $('k-gn').textContent = fmt(m.gini_turns, 3);
+  $('k-ls').textContent = fmt(m.least_active_share_time, 2); $('k-rr').textContent = fmt(m.response_rate, 2);
+  $('k-lat').textContent = fmt(m.mean_latency_s, 1); $('k-tt').textContent = m.total_turns;
+  $('taskTitle').textContent = s.task ? '— ' + s.task + ' · ' + s.task_title : '';
+  $('qs').innerHTML = s.questions.map((q, i) => `<li class="${i < s.question_idx ? 'done' : i === s.question_idx ? 'now' : ''}">${q}</li>`).join('');
+  $('logfile').textContent = s.log_file.split(/[\\/]/).pop();
+  $('log').innerHTML = s.log_tail.slice().reverse().map(r => `${Number(r.t_rel).toFixed(1).padStart(7)}  ${(r.condition || '--').padEnd(3)} ${r.event.padEnd(14)} ${r.seat || ' '}  ${String(r.value).slice(0, 80)}`).join('<br>');
+  const res = Object.entries(s.results);
+  $('results').innerHTML = res.length ? '<table class="res"><tr><th>Completed</th><th>Gini time</th><th>Gini turns</th><th>Least share</th><th>Resp. rate</th><th>Minutes</th></tr>' +
+    res.map(([c, r]) => `<tr><td>${c.toUpperCase()}</td><td>${fmt(r.gini_time, 3)}</td><td>${fmt(r.gini_turns, 3)}</td><td>${fmt(r.least_active_share_time, 2)}</td><td>${fmt(r.response_rate, 2)}</td><td>${fmt(r.duration_s / 60, 1)}</td></tr>`).join('') + '</table>' : '';
+  if (s.vad_error) $('sessmsg').innerHTML = '<span class="warn">' + s.vad_error + '</span>';
+}
+
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const seats = INFO ? INFO.seats : [];
+  const n = parseInt(e.key);
+  if (n >= 1 && n <= seats.length) { post('/api/speak/' + seats[n - 1]); e.preventDefault(); }
+  else if (e.key === ' ') { post('/api/silence'); e.preventDefault(); }
+  else if (e.key === 'i' || e.key === 'I') invite();
+  else if (e.key === 'n' || e.key === 'N') nextQ();
+  else if (e.key === 'Escape') post('/api/stop');
+});
+init();
+</script>
+</body>
+</html>
