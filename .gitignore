@@ -6,3 +6,8 @@ results/
 results_sim/
 logs_sim/
 data/questionnaire.csv
+venv/
+venv312/
+logs/
+config/face_landmarker.task
+__pycache__/

@@ -2,6 +2,10 @@
 
   check       test the connection to Furhat and every capability Nuru uses
   panel       start the operator web panel (main tool for running sessions)
+  describe    the robot says hello and comments on each person's expression and
+              clothing colour, tailoring what it says (social-features lab demo)
+  session     fully automatic session: Furhat's camera+mic detect who speaks,
+              the robot greets, runs C1/C2/C3 with their topics and invites by itself
   cli         keyboard-only operator console (backup to the panel)
   demo        30-second live demonstration of C1, C2 and C3 invitations
   clips       Phase 1: play co-design stimulus clips (--list to see them)
@@ -61,15 +65,177 @@ def cmd_check(args, cfg):
     return 0 if ok_all else 1
 
 
+# ------------------------------------------------- automatic speech detection
+def _avsd_opts(args, cfg) -> dict:
+    """Options for nuru.avsd.AVSDRunner from --camera / --mic / --threshold / --motion."""
+    furhat_cam = args.camera == "furhat"
+    return {"camera": 0 if furhat_cam else int(args.camera),
+            "furhat_ip": cfg.host if furhat_cam or args.mic == "furhat" else None,
+            "furhat_audio": args.mic == "furhat",
+            "mic_device": None if args.mic in ("furhat", "default") else int(args.mic),
+            "threshold_db": args.threshold, "min_motion": args.motion}
+
+
+def avsd_args(sp):
+    sp.add_argument("--camera", default="furhat",
+                    help="'furhat' (robot camera, default) or a webcam number, e.g. 0")
+    sp.add_argument("--mic", default="furhat",
+                    help="'furhat' (robot mic, default), 'default' (laptop mic) or a device number")
+    sp.add_argument("--threshold", type=float, default=9.0, help="mic sensitivity dB (lower = more sensitive)")
+    sp.add_argument("--motion", type=float, default=0.004, help="mouth-motion threshold (lower = more sensitive)")
+    return sp
+
+
 # --------------------------------------------------------------------- panel
 def cmd_panel(args, cfg):
     from .panel import serve
     robot = _robot(args, cfg)
     vad_opts = None
-    if args.vad:
+    if args.avsd:
+        vad_opts = {"kind": "avsd", "auto": args.auto, **_avsd_opts(args, cfg)}
+    elif args.vad:
         vad_opts = {"device": args.device,
-                    "channels": [int(c) for c in args.channels.split(",")] if args.channels else None}
+                    "channels": [int(c) for c in args.channels.split(",")] if args.channels else None,
+                    "auto": args.auto}
     serve(cfg, robot, host=args.bind, port=args.port, vad_opts=vad_opts)
+
+
+# ------------------------------------------------------------------- session
+def _wait_robot(ctrl, timeout=90.0):
+    """Wait until the robot has finished everything queued (speech, invitations)."""
+    t0 = time.time()
+    time.sleep(0.3)
+    while time.time() - t0 < timeout:
+        if ctrl._q.empty() and ctrl._inviting is None and ctrl.status == "idle":
+            return
+        time.sleep(0.2)
+
+
+def _introduce(ctrl, robot, det, cfg, look_s=3.0):
+    """After hello: look at each person, mention their top's colour and facial
+    expression, and tailor the line (e.g. reassurance for a serious face)."""
+    from .avsd import describe_sentence
+    print("Looking at the participants...")
+    time.sleep(look_s)                       # collect a few seconds of observations
+    for seat, point in cfg.seats.items():
+        robot.attend_location(point)
+        time.sleep(0.8)                      # let the robot settle its gaze on the person
+        obs = det.observation(seat)
+        text = describe_sentence(obs)
+        print(f"  {seat}: {obs or 'not seen'}  ->  \"{text}\"")
+        ctrl.log.write("social_features", seat, value=obs or {})
+        ctrl.log.write("robot_say", seat, text, lang="en")
+        robot.say(text, "en", blocking=True)
+    robot.attend_location(cfg.group_centre)
+
+
+def _start_detector(args, cfg, ctrl, on_change=None):
+    from .avsd import AVSDRunner
+    det = AVSDRunner(ctrl, on_change=on_change, **_avsd_opts(args, cfg))
+    det.start()
+    print("Starting the robot's camera and microphone (first time can take ~20 s)...")
+    time.sleep(5)
+    if det.error:
+        ctrl.shutdown()
+        sys.exit(det.error)
+    return det
+
+
+def cmd_describe(args, cfg):
+    """Lab demo: hello + tailored comment on each person's expression and clothing."""
+    from .controller import NuruController
+    robot = _robot(args, cfg)
+    if not args.mock and not robot.ping():
+        sys.exit(f"Robot at {cfg.host}:{cfg.port} not reachable - start the Remote API skill on the robot.")
+    ctrl = NuruController(cfg, robot, group=args.group.upper())
+    det = _start_detector(args, cfg, ctrl)
+    try:
+        ctrl.greet()
+        _wait_robot(ctrl)
+        _introduce(ctrl, robot, det, cfg)
+    finally:
+        det.stop()
+        ctrl.shutdown()
+    print(f"Saved {ctrl.log.path}")
+
+
+def cmd_session(args, cfg):
+    """Fully automatic session. The operator only starts it and presses Enter
+    between conditions (so participants can fill in the questionnaire)."""
+    from .controller import NuruController
+
+    robot = _robot(args, cfg)
+    if not args.mock and not robot.ping():
+        sys.exit(f"Robot at {cfg.host}:{cfg.port} not reachable - start the Remote API skill on the robot.")
+    conds = [c.lower() for c in args.conditions]
+    unknown = [c for c in conds if c not in cfg.profiles]
+    if unknown:
+        sys.exit(f"Unknown condition(s) {unknown}; choose from {list(cfg.profiles)}")
+    all_tasks = list(cfg.tasks["tasks"])
+    if args.tasks and any(t.upper() not in cfg.tasks["tasks"] for t in args.tasks):
+        sys.exit(f"Unknown task in {args.tasks}; choose from {all_tasks}")
+
+    ctrl = NuruController(cfg, robot, group=args.group.upper())
+
+    def on_change(seat):
+        if not args.quiet:
+            print(f"    {time.strftime('%H:%M:%S')}  {('speaking: ' + seat) if seat else 'silence'}")
+
+    det = _start_detector(args, cfg, ctrl, on_change)
+
+    ctrl.set_auto(True)
+    print(f"Group {args.group.upper()}  conditions {' -> '.join(c.upper() for c in conds)}  "
+          f"{args.minutes:g} min each.  Ctrl+C = emergency stop.\nLog: {ctrl.log.path}")
+    try:
+        ctrl.greet()
+        _wait_robot(ctrl)
+        if not args.no_describe:
+            _introduce(ctrl, robot, det, cfg)
+        for i, cond in enumerate(conds):
+            task = (args.tasks[i].upper() if args.tasks and i < len(args.tasks)
+                    else all_tasks[i % len(all_tasks)])
+            questions = cfg.tasks["tasks"][task]["questions"]
+            n_q = max(1, min(len(questions), args.questions))
+            print(f"\n=== {cond.upper()}: {cfg.profiles[cond].get('label', '')}  |  task {task}: "
+                  f"{cfg.tasks['tasks'][task]['title']}")
+            ctrl.start_condition(cond, task)
+            _wait_robot(ctrl)
+            ctrl.next_question()
+            _wait_robot(ctrl)
+            dur = args.minutes * 60
+            t0, asked = time.time(), 1
+            while time.time() - t0 < dur:
+                time.sleep(0.5)
+                if det.error:
+                    raise RuntimeError(det.error)
+                due = asked < n_q and time.time() - t0 >= asked * dur / n_q
+                late = due and time.time() - t0 >= asked * dur / n_q + 20
+                # next question when nobody is speaking (or 20 s late at the latest)
+                if due and ctrl._inviting is None and (ctrl.tracker.current is None or late):
+                    ctrl.next_question()
+                    asked += 1
+            _wait_robot(ctrl)
+            m = ctrl.end_condition() or {}
+            print(f"--- {cond.upper()} done:  Gini(time) {m.get('gini_time')}  "
+                  f"response rate {m.get('response_rate')}")
+            for s in cfg.seats:
+                print(f"      {s}: {m.get('speaking_time_s', {}).get(s, 0):6.1f} s  "
+                      f"{m.get('turns', {}).get(s, 0)} turns  invited {m.get('invitations', {}).get(s, 0)}")
+            if i < len(conds) - 1:
+                robot.attend_location(cfg.group_centre)
+                if args.no_pause:
+                    time.sleep(args.break_s)
+                else:
+                    input("\n  Questionnaire time. Press Enter to start the next condition... ")
+        ctrl.close()
+        _wait_robot(ctrl)
+    except KeyboardInterrupt:
+        print("\nStopped by operator.")
+        ctrl.stop_robot()
+    finally:
+        det.stop()
+        ctrl.shutdown()
+    print(f"\nSaved {ctrl.log.path}\nAnalyse with:  python -m nuru analyze logs/")
 
 
 # ----------------------------------------------------------------------- cli
@@ -239,6 +405,23 @@ def main(argv=None):
     sp.add_argument("--vad", action="store_true", help="detect speech from per-seat microphones")
     sp.add_argument("--device", type=int, help="audio input device index (python -m sounddevice)")
     sp.add_argument("--channels", help="input channels for seats, e.g. 0,1,2,3")
+    sp.add_argument("--avsd", action="store_true",
+                    help="detect who speaks with Furhat's camera + mic (see --camera/--mic)")
+    sp.add_argument("--auto", action="store_true", help="turn automatic invitations on at session start")
+    avsd_args(sp)
+    sp = avsd_args(robot_args(sub.add_parser("session")))
+    sp.add_argument("--group", default="G00", help="group id for the log, e.g. G03")
+    sp.add_argument("--conditions", nargs="+", default=["c1", "c2", "c3"], help="order, e.g. c3 c1 c2")
+    sp.add_argument("--tasks", nargs="+", help="task id per condition, e.g. T2 T3 T1 (default: in order)")
+    sp.add_argument("--minutes", type=float, default=3.0, help="length of each condition")
+    sp.add_argument("--questions", type=int, default=2, help="discussion questions asked per condition")
+    sp.add_argument("--no-pause", action="store_true", help="don't wait for Enter between conditions")
+    sp.add_argument("--break-s", type=float, default=10.0, help="break length with --no-pause")
+    sp.add_argument("--quiet", action="store_true", help="don't print every speaker change")
+    sp.add_argument("--no-describe", action="store_true",
+                    help="skip commenting on expression/clothing after hello")
+    sp = avsd_args(robot_args(sub.add_parser("describe")))
+    sp.add_argument("--group", default="G00")
     sp = robot_args(sub.add_parser("cli"))
     sp.add_argument("--group", default="G00")
     robot_args(sub.add_parser("demo"))
@@ -272,7 +455,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     cfg = load_config(args.config)
-    fn = {"check": cmd_check, "panel": cmd_panel, "cli": cmd_cli, "demo": cmd_demo, "clips": cmd_clips,
+    fn = {"check": cmd_check, "panel": cmd_panel, "session": cmd_session, "describe": cmd_describe, "cli": cmd_cli, "demo": cmd_demo, "clips": cmd_clips,
           "calibrate": cmd_calibrate, "plan": cmd_plan, "analyze": cmd_analyze, "simulate": cmd_simulate}[args.cmd]
     return fn(args, cfg) or 0
 

@@ -2,8 +2,9 @@
 
 The operator marks who is speaking (click / keys 1-4, space = silence), starts
 conditions, advances the discussion script and can trigger or automate
-invitations. With --vad, speech is detected from the microphones and the
-operator only corrects mistakes (WoZ fallback, as in the abstract).
+invitations. With --vad (per-seat microphones) or --avsd (Furhat's camera + mic),
+speech is detected automatically and the operator only corrects mistakes
+(WoZ fallback, as in the abstract).
 """
 
 from __future__ import annotations
@@ -68,6 +69,8 @@ def create_app(cfg, robot, vad_opts: dict | None = None) -> Flask:
         s["session"] = True
         if st["vad"]:
             s["mic_db"] = st["vad"].levels()
+            if getattr(st["vad"], "error", None):      # detector died after starting
+                st["vad_error"] = st["vad"].error
         s["vad_error"] = st["vad_error"]
         return jsonify(s)
 
@@ -81,13 +84,22 @@ def create_app(cfg, robot, vad_opts: dict | None = None) -> Flask:
             c.set_meta(body.get("meta", {}))
             st["ctrl"] = c
             if vad_opts:
+                opts = dict(vad_opts)
+                kind = opts.pop("kind", "vad")
+                auto = opts.pop("auto", False)
                 try:
-                    from .vad import VADRunner
-                    st["vad"] = VADRunner(c, **vad_opts)
+                    if kind == "avsd":
+                        from .avsd import AVSDRunner
+                        st["vad"] = AVSDRunner(c, **opts)
+                    else:
+                        from .vad import VADRunner
+                        st["vad"] = VADRunner(c, **opts)
                     st["vad"].start()
                     st["vad_error"] = None
-                except Exception as e:  # mic problems must not block the session
-                    st["vad"], st["vad_error"] = None, f"VAD unavailable, use manual marking: {e}"
+                except Exception as e:  # mic/camera problems must not block the session
+                    st["vad"], st["vad_error"] = None, f"Speech detection unavailable, use manual marking: {e}"
+                if auto and st["vad"]:
+                    c.set_auto(True)
         return jsonify({"ok": True, "log": str(c.log.path)})
 
     def _end():

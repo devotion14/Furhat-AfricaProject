@@ -380,4 +380,6 @@ class NuruController:
         while not self._q.empty() and time.time() - t0 < 10:
             time.sleep(0.1)
         self._stop.set()
+        self._worker.join(timeout=2)   # let robot/supervisor threads finish before
+        self._super.join(timeout=1)    # closing the log (fixes "I/O operation on closed file")
         self.log.close()

@@ -2,7 +2,7 @@
   "_comment": "Nuru main configuration. Edit seats after calibration (python -m nuru calibrate).",
 
   "robot": {
-    "host": "192.168.0.105",
+    "host": "192.168.1.110",
     "port": 54321,
     "timeout_s": 20
   },
@@ -14,20 +14,18 @@
 
   "_seats_comment": "Seat positions in metres relative to the robot: [x, y, z]. x = left/right, y = up/down (0 = robot eye height), z = distance in front. Listed left-to-right as seen by the operator standing behind the robot.",
   "seats": {
-    "A": [-0.6, 0.0, 1.2],
-    "B": [-0.2, 0.0, 1.2],
-    "C": [0.2, 0.0, 1.2],
-    "D": [0.6, 0.0, 1.2]
+    "A": [-0.3, 0.0, 1.2],
+    "B": [0.3, 0.0, 1.2]
   },
-  "group_centre": [0.0, 0.0, 1.2],
+  "group_centre": [0.0, 0.15, 1.2],
 
   "moderation": {
     "auto_invite": false,
     "_auto_comment": "Auto-invite rules (when auto_invite is on): (a) a lull of auto_invite_silence_s, or (b) a turn boundary (turn_end_gap_s of silence) once turn_end_invite_interval_s have passed since the last invitation. Rule (b) is what gives the robot enough opportunities to act; set it to 0 to disable.",
-    "auto_invite_silence_s": 7.0,
+    "auto_invite_silence_s": 15.0,
     "turn_end_gap_s": 1.5,
-    "turn_end_invite_interval_s": 40.0,
-    "min_gap_between_invites_s": 12.0,
+    "turn_end_invite_interval_s": 25.0,
+    "min_gap_between_invites_s": 20.0,
     "response_window_s": 8.0,
     "no_repeat_window": 2,
     "follow_speaker": true
