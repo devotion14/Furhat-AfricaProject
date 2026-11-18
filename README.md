@@ -88,6 +88,14 @@ python -m nuru session --group G01 --conditions c3 c1 c2 --tasks T2 T3 T1 --minu
 python -m nuru panel --avsd --auto
 ```
 
+**How a session starts:** run the command, then walk away. The robot waits until someone has been in front
+of it for about 2 seconds, then greets them by itself (it uses the camera detector, or Furhat's own face
+tracking if the detector is down). Use `--start-now` to skip the wait while testing.
+
+**If the camera or detector fails:** it restarts itself up to twice. If it is still down, the session keeps
+going without it: the robot invites people on a timer instead of freezing, and the log records a
+`detector_failed` event.
+
 The `session` command pauses between conditions for the questionnaire (press Enter to go on, or use
 `--no-pause`). Ctrl+C is the emergency stop. Useful options:
 

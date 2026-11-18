@@ -508,6 +508,11 @@ class AVSDRunner:
         self.audio_db = -120.0
         self._last = None
         self.error = None
+        self.warning = None              # set while restarting after a failure
+        self.max_restarts = 2
+        self.n_faces = 0                 # faces in the latest frame
+        self._present_since = None       # when someone appeared (None = nobody)
+        self._last_face_t = 0.0
         self._obs = {s: {"expression": collections.deque(maxlen=30),
                          "colour": collections.deque(maxlen=30)} for s in self.seats}
         self._obs_lock = threading.Lock()
@@ -574,7 +579,9 @@ class AVSDRunner:
                 if not ok:
                     time.sleep(0.01)
                     continue
+                self.warning = None                 # frames are flowing again
                 found = detect(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                self._update_presence(len(found))
                 faces = [face_features(f) for f in found]
                 self._observe(frame, found, faces)
                 speaker = self.decider.update(faces, self.audio_active)
@@ -587,7 +594,23 @@ class AVSDRunner:
             cap.release()
             if self.show:
                 cv2.destroyAllWindows()
-            self.stop()
+            self._release_audio()
+
+    # presence ----------------------------------------------------------
+    def _update_presence(self, n):
+        """Track how long someone has been in view (short dropouts < 0.5 s are ignored)."""
+        now = time.time()
+        self.n_faces = n
+        if n:
+            if self._present_since is None:
+                self._present_since = now
+            self._last_face_t = now
+        elif now - self._last_face_t > 0.5:
+            self._present_since = None
+
+    def present_s(self) -> float:
+        """Seconds that at least one face has been continuously in view (0 = nobody)."""
+        return 0.0 if self._present_since is None else time.time() - self._present_since
 
     # social features ---------------------------------------------------
     def _observe(self, frame, found, faces):
@@ -641,11 +664,24 @@ class AVSDRunner:
         self.error = None
 
         def run():
-            try:
-                self.run_blocking()
-            except Exception as e:  # report to the panel instead of dying silently
-                self.error = f"Speaker detection stopped: {e}"
-                log.exception("AVSD failed")
+            # Restart on failure (camera feed dropped, network hiccup) before giving up.
+            # While down we report silence, so the controller never keeps a stale speaker.
+            for attempt in range(self.max_restarts + 1):
+                try:
+                    self.run_blocking()
+                    return                          # stopped on purpose
+                except Exception as e:
+                    log.exception("AVSD failed (attempt %d)", attempt + 1)
+                    self._emit(None)
+                    self._present_since = None
+                    if self._stop.is_set():
+                        return
+                    if attempt < self.max_restarts:
+                        self.warning = f"Speaker detection restarting after: {e}"
+                        time.sleep(2.0)
+                    else:   # report to the panel / session instead of dying silently
+                        self.error = f"Speaker detection stopped: {e}"
+            self.warning = None
         self._thread = threading.Thread(target=run, daemon=True, name="nuru-avsd")
         self._thread.start()
 
@@ -655,6 +691,9 @@ class AVSDRunner:
 
     def stop(self):
         self._stop.set()
+        self._release_audio()
+
+    def _release_audio(self):
         if self._faudio:
             self._faudio.stop()
             self._faudio = None

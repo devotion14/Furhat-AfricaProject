@@ -130,15 +130,61 @@ def _introduce(ctrl, robot, det, cfg, look_s=3.0):
 
 
 def _start_detector(args, cfg, ctrl, on_change=None):
+    """Start camera+mic speaker detection. If it cannot start, the session still
+    runs: presence comes from Furhat's own face tracking and invitations fall
+    back to the timed rule (see _check_detector)."""
     from .avsd import AVSDRunner
     det = AVSDRunner(ctrl, on_change=on_change, **_avsd_opts(args, cfg))
     det.start()
     print("Starting the robot's camera and microphone (first time can take ~20 s)...")
     time.sleep(5)
-    if det.error:
-        ctrl.shutdown()
-        sys.exit(det.error)
+    _check_detector(ctrl, det)
     return det
+
+
+def _check_detector(ctrl, det):
+    """Report (once) that speaker detection is down and switch to the default
+    behaviour: no speaker info, so the robot keeps moderating with timed
+    invitations (auto-invite after a lull) instead of freezing."""
+    if det.error and not getattr(det, "_reported", False):
+        det._reported = True
+        print(f"\n  WARNING: {det.error}\n  Continuing without speaker detection: "
+              "the robot invites on a timer.")
+        ctrl.log.write("detector_failed", "", det.error)
+        ctrl.silence()
+        return False
+    return not det.error
+
+
+def _wait_for_people(robot, det, hold_s=2.0, mock=False):
+    """SENSE step that starts the interaction: block until someone has been in
+    front of the robot for hold_s seconds. Uses our camera detector, or
+    Furhat's own user tracking if the detector is not running."""
+    print("Waiting for someone to sit down in front of the robot...  (Ctrl+C to quit)")
+    since = None
+    while True:
+        if not det.error:
+            if det.present_s() >= hold_s:
+                return "camera"
+        elif mock:
+            return "mock"
+        elif robot.users():
+            since = since or time.time()
+            if time.time() - since >= hold_s:
+                return "furhat"
+        else:
+            since = None
+        time.sleep(0.2)
+
+
+def _start_when_present(args, robot, det, ctrl):
+    if args.start_now:
+        print("Starting now (--start-now).")
+        ctrl.log.write("session_trigger", "", "manual")
+        return
+    how = _wait_for_people(robot, det, mock=args.mock)
+    print(f"Person detected ({how}) - starting.")
+    ctrl.log.write("session_trigger", "", how)
 
 
 def cmd_describe(args, cfg):
@@ -150,6 +196,7 @@ def cmd_describe(args, cfg):
     ctrl = NuruController(cfg, robot, group=args.group.upper())
     det = _start_detector(args, cfg, ctrl)
     try:
+        _start_when_present(args, robot, det, ctrl)
         ctrl.greet()
         _wait_robot(ctrl)
         _introduce(ctrl, robot, det, cfg)
@@ -184,6 +231,12 @@ def cmd_session(args, cfg):
     det = _start_detector(args, cfg, ctrl, on_change)
 
     ctrl.set_auto(True)
+    try:
+        _start_when_present(args, robot, det, ctrl)
+    except KeyboardInterrupt:
+        det.stop()
+        ctrl.shutdown()
+        return 1
     print(f"Group {args.group.upper()}  conditions {' -> '.join(c.upper() for c in conds)}  "
           f"{args.minutes:g} min each.  Ctrl+C = emergency stop.\nLog: {ctrl.log.path}")
     try:
@@ -206,8 +259,7 @@ def cmd_session(args, cfg):
             t0, asked = time.time(), 1
             while time.time() - t0 < dur:
                 time.sleep(0.5)
-                if det.error:
-                    raise RuntimeError(det.error)
+                _check_detector(ctrl, det)
                 due = asked < n_q and time.time() - t0 >= asked * dur / n_q
                 late = due and time.time() - t0 >= asked * dur / n_q + 20
                 # next question when nobody is speaking (or 20 s late at the latest)
@@ -420,8 +472,12 @@ def main(argv=None):
     sp.add_argument("--quiet", action="store_true", help="don't print every speaker change")
     sp.add_argument("--no-describe", action="store_true",
                     help="skip commenting on expression/clothing after hello")
+    sp.add_argument("--start-now", action="store_true",
+                    help="start immediately instead of waiting for a person to be detected")
     sp = avsd_args(robot_args(sub.add_parser("describe")))
     sp.add_argument("--group", default="G00")
+    sp.add_argument("--start-now", action="store_true",
+                    help="start immediately instead of waiting for a person to be detected")
     sp = robot_args(sub.add_parser("cli"))
     sp.add_argument("--group", default="G00")
     robot_args(sub.add_parser("demo"))
