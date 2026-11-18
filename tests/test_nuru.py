@@ -219,3 +219,77 @@ def test_controller_end_to_end(tmp_path):
 
     res = analyze(tmp_path, tmp_path / "out", plot=False)
     assert Path(res["report"]).exists()
+
+
+# ------------------------------------------------------------- live mode
+from nuru.live import (Memory, LiveSession, play_scenario, plan_after_listen, plan_between_questions,
+                       plan_engagement, plan_invitee, plan_mode)
+from nuru.perception import PeopleTracker, Percept, Person
+
+
+def _pc(*people, t=100.0):
+    return Percept(t, [Person(pid, (x, 0.0, z), first, t) for pid, x, z, first in people])
+
+
+def test_perception_confirms_and_loses_people():
+    c = FakeClock()
+    tr = PeopleTracker(MockRobot(quiet=True), poll_s=0.3, confirm_s=1.0, lost_after_s=3.0, clock=c)
+    face = {"id": "u1", "location": {"x": 0.1, "y": 0.0, "z": 1.0}}
+    far = {"id": "u2", "location": {"x": 0.0, "y": 0.0, "z": 4.0}}
+    tr.update([face, far]); assert tr.snapshot().n == 0          # not yet confirmed; far face ignored
+    c.t += 1.1; tr.update([face])
+    p = tr.snapshot(); assert [x.id for x in p.people] == ["u1"] and p.arrived == ["u1"]
+    c.t += 1.0; tr.update(None)                                   # camera hiccup: keep last state
+    assert tr.snapshot().n == 1
+    c.t += 3.5; tr.update([])
+    p = tr.snapshot(); assert p.n == 0 and p.left == ["u1"]
+
+
+def test_plan_social_feature_changes_mode():
+    mem = Memory()
+    assert plan_engagement(_pc(), mem, 1.6).action == "idle"
+    assert plan_engagement(_pc(("a", 0, 2.2, 90)), mem, 1.6).action == "beckon"
+    solo = plan_engagement(_pc(("a", 0, 1.0, 90)), mem, 1.6)
+    group = plan_engagement(_pc(("a", -0.4, 1.0, 90), ("b", 0.4, 1.0, 95)), mem, 1.6)
+    assert (solo.action, solo.mode) == ("start", "solo")
+    assert (group.action, group.mode) == ("start", "group")
+
+
+def test_plan_newcomer_and_departure():
+    mem = Memory(greeted={"a"})
+    d = plan_between_questions(_pc(("a", 0, 1.0, 50), ("b", 0.5, 1.0, 98)), mem)
+    assert (d.action, d.target, d.mode) == ("welcome", "b", "group")
+    assert plan_between_questions(_pc(), mem).action == "farewell"
+
+
+def test_plan_invitee_least_heard_then_longest_present():
+    p = _pc(("a", -0.4, 1.0, 10), ("b", 0.0, 1.0, 50), ("c", 0.4, 1.0, 90))
+    mem = Memory(heard_s={"a": 5.0})
+    assert plan_invitee(p, mem) == "b"            # b and c unheard; b has been there longer
+    mem.invited.append("b")
+    assert plan_invitee(p, mem) == "c"            # never the same person twice in a row
+
+
+def test_plan_failure_handling():
+    assert plan_after_listen("speech", "solo", 0, True).action == "acknowledge"
+    assert plan_after_listen("silence", "solo", 0, True).action == "repair"
+    assert plan_after_listen("silence", "solo", 1, True).action == "release"
+    assert plan_after_listen("silence", "group", 0, True).action == "release"   # never insists
+    assert plan_after_listen("silence", "group", 0, False).action == "invite"
+    assert plan_after_listen("error", "solo", 0, True).action == "repair_tech"
+    assert plan_after_listen("error", "solo", 1, True).action == "repair_tech_move_on"
+
+
+@pytest.mark.parametrize("scenario,expect", [("solo", "Hello, I am Nuru"), ("group", "Hakuna shida.")])
+def test_live_session_runs_without_operator(tmp_path, scenario, expect):
+    cfg = _cfg(); cfg.log_dir = tmp_path
+    robot = MockRobot(speed=0.02, quiet=True)
+    sess = LiveSession(cfg, robot, verbose=False, speed=0.02,
+                       sense=PeopleTracker(robot, poll_s=0.05, confirm_s=0.1, lost_after_s=0.5))
+    play_scenario(robot, scenario, 0.02, sess.stop_event)
+    t = threading.Thread(target=sess.run, kwargs={"max_interactions": 1}, daemon=True)
+    t.start(); t.join(20)
+    assert not t.is_alive(), "live session did not finish"
+    says = " ".join(a[3] for a in robot.actions if a[1] == "say")
+    assert expect in says
+    assert any(a[1] == "led" for a in robot.actions)              # state feedback on the LED

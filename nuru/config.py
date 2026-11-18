@@ -39,6 +39,7 @@ class Config:
     moderation: dict = field(default_factory=dict)
     profiles: dict = field(default_factory=dict)
     tasks: dict = field(default_factory=dict)
+    live: dict = field(default_factory=dict)
     log_dir: Path = ROOT / "logs"
     source: Path | None = None
 
@@ -61,6 +62,8 @@ def load_config(path: str | Path | None = None,
     raw = _load_json(path)
     profiles = _load_json(Path(profiles_path) if profiles_path else CONFIG_DIR / "profiles.json")
     tasks = _load_json(Path(tasks_path) if tasks_path else CONFIG_DIR / "tasks.json")
+    live_path = CONFIG_DIR / "live.json"
+    live = _load_json(live_path) if live_path.exists() else {}
 
     robot = raw.get("robot", {})
     log_dir = Path(raw.get("log_dir", "logs"))
@@ -77,6 +80,7 @@ def load_config(path: str | Path | None = None,
         moderation=raw.get("moderation", {}),
         profiles={k.lower(): v for k, v in profiles.items()},
         tasks=tasks,
+        live=live,
         log_dir=log_dir,
         source=path,
     )

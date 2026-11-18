@@ -1,0 +1,48 @@
+{
+  "_comment": "Autonomous live mode (python -m nuru live). The robot senses people with its own camera and microphone, decides with the rules in nuru/live.py (plan_* functions) and acts through the cue engine in nuru/cues.py. No operator input is needed.",
+
+  "_sense_comment": "Perception thresholds. A face must be seen for confirm_s before it counts, and missing for lost_after_s before the person counts as gone. Faces further than max_distance_m are ignored (passers-by).",
+  "confirm_s": 1.0,
+  "lost_after_s": 3.0,
+  "max_distance_m": 2.5,
+  "engage_distance_m": 1.6,
+
+  "_listen_comment": "Furhat ASR: we only use whether and how long someone spoke, never the words. listen_timeout_s is a hard cap on one listen call.",
+  "listen_language": "en-US",
+  "listen_timeout_s": 20,
+
+  "task": "T3",
+  "n_questions": 2,
+
+  "_mode_comment": "The social feature: how many people are present. 1 person -> 'solo' cues (direct, repair by repeating). 2+ people -> the group profile (C3 Nuru cues: group first, pair, short gaze, bilingual, never insists).",
+  "group_profile": "c3",
+
+  "solo": {
+    "gaze_hold_s": 3.0,
+    "smile": true,
+    "nod": "Nod",
+    "prompt_mode": "en"
+  },
+
+  "led": {
+    "idle": [0, 0, 0],
+    "speaking": [30, 30, 30],
+    "listening": [0, 40, 110],
+    "attention": [80, 50, 0]
+  },
+
+  "lines": {
+    "beckon":        {"sw": "Karibu!", "en": "Come closer, I would like to talk with you."},
+    "greet_solo":    {"sw": "Habari!", "en": "Hello, I am Nuru. Let's have a short chat. There are no wrong answers."},
+    "greet_group":   {"sw": "Habari zenu! Karibuni.", "en": "Hello everyone, I am Nuru. Let's discuss a question together. There are no wrong answers, and you can always pass."},
+    "welcome":       {"sw": "Karibu!", "en": "Welcome, please join us."},
+    "ack":           {"sw": "Asante.", "en": "Thank you."},
+    "ack_group":     {"sw": "Asanteni.", "en": "Thank you."},
+    "repair":        {"en": "Sorry, I didn't catch that. Take your time."},
+    "repair_tech":   {"en": "Sorry, I could not hear properly."},
+    "release_solo":  {"en": "That's okay. Let's try another one."},
+    "someone_left":  {"en": "Goodbye, thank you for joining."},
+    "closing_solo":  {"sw": "Asante sana!", "en": "Thank you for talking with me. Goodbye!"},
+    "closing_group": {"sw": "Asanteni sana!", "en": "Thank you all for sharing your ideas. Goodbye!"}
+  }
+}

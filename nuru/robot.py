@@ -68,6 +68,12 @@ class FurhatRobot:
         res = self._call("GET", "/users", timeout=5)
         return res if isinstance(res, list) else []
 
+    def users_or_none(self) -> list[dict] | None:
+        """Like users(), but None when the call failed (so perception can tell
+        'nobody there' apart from 'camera/robot not answering')."""
+        res = self._call("GET", "/users", timeout=2)
+        return res if isinstance(res, list) else None
+
     def voices_available(self) -> list[dict]:
         res = self._call("GET", "/voices")
         return res if isinstance(res, list) else []
@@ -101,6 +107,28 @@ class FurhatRobot:
         res = self._call("GET", "/listen", params={"language": lang}, timeout=30)
         return res.get("message", "") if isinstance(res, dict) else ""
 
+    # Messages Furhat returns instead of a transcript.
+    NO_SPEECH = {"", "SILENCE", "NOMATCH", "INTERRUPTED", "ERROR"}
+
+    def listen_timed(self, lang: str = "en-US", timeout_s: float = 12.0) -> dict:
+        """Listen once. Returns {"status": speech|silence|error, "duration_s", "n_words"}.
+
+        The transcript itself is deliberately NOT returned: the live loop only
+        uses whether, and for how long, the person spoke (a perceived feature),
+        never what they said. Hard timeout: the call can never block longer
+        than timeout_s, after which listening is stopped on the robot.
+        """
+        t0 = time.time()
+        res = self._call("GET", "/listen", params={"language": lang}, timeout=timeout_s)
+        dur = time.time() - t0
+        if not isinstance(res, dict):
+            self._call("POST", "/listen/stop", timeout=2)
+            return {"status": "error", "duration_s": dur, "n_words": 0}
+        msg = str(res.get("message", "")).strip()
+        if msg.upper() in self.NO_SPEECH:
+            return {"status": "silence", "duration_s": dur, "n_words": 0}
+        return {"status": "speech", "duration_s": dur, "n_words": len(msg.split())}
+
     # -- gaze / head ---------------------------------------------------------
     def attend_location(self, point) -> bool:
         return self._ok(self._call("POST", "/attend", params={"location": fmt_point(point)}))
@@ -120,12 +148,20 @@ class FurhatRobot:
 
 
 class MockRobot:
-    """Drop-in replacement that prints actions. speed < 1 makes speech faster."""
+    """Drop-in replacement that prints actions. speed < 1 makes speech faster.
+
+    For the live mode it can also be scripted: `scene` is the list of faces
+    the "camera" sees (edit it from a scenario thread) and `heard` is a queue
+    of listen outcomes, e.g. [("speech", 2.0), ("silence", 0)].
+    """
 
     def __init__(self, speed: float = 1.0, quiet: bool = False, **_):
         self.speed = speed
         self.quiet = quiet
         self.actions: list[tuple] = []
+        self.scene: list[dict] = []
+        self.heard: list[tuple[str, float]] = []
+        self.camera_ok = True
 
     def _do(self, *action):
         self.actions.append((time.time(), *action))
@@ -134,7 +170,8 @@ class MockRobot:
         return True
 
     def ping(self): return True
-    def users(self): return []
+    def users(self): return list(self.scene)
+    def users_or_none(self): return list(self.scene) if self.camera_ok else None
     def voices_available(self): return []
     def gestures_available(self): return ["Nod", "Smile", "BigSmile"]
     def set_voice(self, name): return self._do("voice", name)
@@ -147,6 +184,13 @@ class MockRobot:
 
     def stop_speaking(self): return self._do("say_stop")
     def listen(self, lang="en-US"): return ""
+
+    def listen_timed(self, lang="en-US", timeout_s=12.0):
+        status, secs = self.heard.pop(0) if self.heard else ("silence", 0.0)
+        wait = secs if status == "speech" else min(timeout_s, 5.0)   # Furhat gives up after ~5 s of silence
+        self._do("listen", f"-> {status}")
+        time.sleep(wait * self.speed)
+        return {"status": status, "duration_s": wait, "n_words": int(secs * 2.5) if status == "speech" else 0}
     def attend_location(self, point): return self._do("attend", fmt_point(point))
     def attend_user(self, user_id): return self._do("attend_user", user_id)
 
