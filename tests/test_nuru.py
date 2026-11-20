@@ -95,7 +95,10 @@ def test_auto_invite_rules():
 
 # ------------------------------------------------------------------ cues
 def _cfg():
-    return load_config()
+    """Tests use a fixed 4-seat layout, independent of the room set-up in config/nuru.json."""
+    cfg = load_config()
+    cfg.seats = {"A": [-0.6, 0.0, 1.2], "B": [-0.2, 0.0, 1.2], "C": [0.2, 0.0, 1.2], "D": [0.6, 0.0, 1.2]}
+    return cfg
 
 
 def test_c3_cue_sequence_and_release():
