@@ -16,6 +16,7 @@ This repository is the complete working system for the study:
 | You want to… | Command | Covers |
 |---|---|---|
 | Check the robot is ready | `python -m nuru check` | setup |
+| **Lab 1 demo: fully autonomous interaction** | `python -m nuru live` (rehearse: `--mock --scenario group`) | DD2413 Lab 1, see [docs/LAB1_GRADING_GUIDE.md](docs/LAB1_GRADING_GUIDE.md) |
 | Run a study session | `python -m nuru panel`, then open http://localhost:5000 | Phase 3, Study A |
 | Run a fully automatic session | `python -m nuru session --group G01` | Phase 3, Study A |
 | Have the robot greet and comment on each person | `python -m nuru describe` | social-features demo |

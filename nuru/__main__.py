@@ -1,6 +1,7 @@
 """Nuru command line.   python -m nuru <command> [options]
 
   check       test the connection to Furhat and every capability Nuru uses
+  live        AUTONOMOUS mode: robot detects people and runs the interaction itself
   panel       start the operator web panel (main tool for running sessions)
   describe    the robot says hello and comments on each person's expression and
               clothing colour, tailoring what it says (social-features lab demo)
@@ -47,9 +48,21 @@ def cmd_check(args, cfg):
         print(f"  [{'OK ' if ok else 'FAIL'}] {name}" + (f"  - {detail}" if detail and not ok else ""))
 
     print(f"Checking Furhat at {cfg.host}:{cfg.port}")
-    report("Remote API reachable", robot.ping(), "is the Remote API skill running on the robot?")
+    reachable = robot.ping()
+    report("Remote API reachable", reachable)
     if args.mock:
         return 0
+    if not reachable:
+        print(f"""
+  Nuru cannot reach the Remote API on {cfg.host}:{cfg.port}.
+  Check whether the robot's web UI opens: http://{cfg.host}:8080
+    - If it opens and says "No Skill Running", the Remote API is stopped. Start it:
+        * Furhat SDK (virtual robot): in the SDK launcher window on that PC,
+          press "Start Remote API" (or "Remote API" -> Start).
+        * Real robot: web UI -> Skills -> Remote API -> Start.
+    - If it does not open, check the IP address (config/nuru.json) and Wi-Fi.
+  Then run:  python -m nuru check""")
+        return 1
     voices = {v["name"] for v in robot.voices_available()}
     for lang, v in cfg.voices.items():
         report(f"voice {lang} = {v}", v in voices)
@@ -84,6 +97,31 @@ def avsd_args(sp):
     sp.add_argument("--threshold", type=float, default=9.0, help="mic sensitivity dB (lower = more sensitive)")
     sp.add_argument("--motion", type=float, default=0.004, help="mouth-motion threshold (lower = more sensitive)")
     return sp
+
+
+# ---------------------------------------------------------------------- live
+def cmd_live(args, cfg):
+    import threading
+    from .live import SCENARIOS, LiveSession, play_scenario
+    from .robot import MockRobot
+    if args.mock:
+        robot = MockRobot(speed=args.speed)
+    else:
+        robot = _robot(args, cfg)
+        if not robot.ping():
+            print(f"Robot {cfg.host}:{cfg.port} not reachable - run  python -m nuru check  first.")
+            return 1
+    sess = LiveSession(cfg, robot, speed=args.speed if args.mock else 1.0)
+    if args.mock:
+        if args.scenario not in SCENARIOS:
+            sys.exit(f"Unknown scenario {args.scenario!r}; choose from {list(SCENARIOS)}")
+        print(f"MOCK scenario '{args.scenario}' (camera and microphone are scripted)")
+        play_scenario(robot, args.scenario, args.speed, sess.stop_event)
+    try:
+        sess.run(max_interactions=args.max or (1 if args.mock else None))
+    except KeyboardInterrupt:
+        sess.stop_event.set()
+    return 0
 
 
 # --------------------------------------------------------------------- panel
@@ -451,6 +489,10 @@ def main(argv=None):
         return sp
 
     robot_args(sub.add_parser("check"))
+    sp = robot_args(sub.add_parser("live"))
+    sp.add_argument("--scenario", default="group", help="with --mock: solo | group | newcomer | far | failures")
+    sp.add_argument("--speed", type=float, default=0.5, help="with --mock: <1 runs faster")
+    sp.add_argument("--max", type=int, help="stop after this many interactions")
     sp = robot_args(sub.add_parser("panel"))
     sp.add_argument("--port", type=int, default=5000)
     sp.add_argument("--bind", default="127.0.0.1", help="0.0.0.0 to open the panel from a tablet")
@@ -511,7 +553,8 @@ def main(argv=None):
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     cfg = load_config(args.config)
-    fn = {"check": cmd_check, "panel": cmd_panel, "session": cmd_session, "describe": cmd_describe, "cli": cmd_cli, "demo": cmd_demo, "clips": cmd_clips,
+    fn = {"check": cmd_check, "live": cmd_live, "panel": cmd_panel, "session": cmd_session, "describe": cmd_describe,
+          "cli": cmd_cli, "demo": cmd_demo, "clips": cmd_clips,
           "calibrate": cmd_calibrate, "plan": cmd_plan, "analyze": cmd_analyze, "simulate": cmd_simulate}[args.cmd]
     return fn(args, cfg) or 0
 
