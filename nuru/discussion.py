@@ -69,6 +69,14 @@ class Transcript:
     def unattributed_s(self) -> float:
         return sum(u.duration for u in self.human() if not u.person)
 
+    def language_mix(self, n: int = 8) -> dict:
+        """Languages of the last n human turns, e.g. {'en': 5, 'sw': 2}."""
+        out = {}
+        for u in self.human()[-n:]:
+            if u.text and u.lang:
+                out[u.lang] = out.get(u.lang, 0) + 1
+        return out
+
     def last_lang(self, default="en") -> str:
         for u in reversed(self.human()):
             if u.text and u.lang in ("en", "sw"):
@@ -190,8 +198,9 @@ How you contribute:
 one answer as the only right one. Build on what people said; credit ideas ("that point about cost...").
 - Keep it SHORT: it is spoken aloud. At most 2 sentences, at most 40 words in total.
 - End with an open question to the whole group about half of the time, not always.
-- Language: answer in the language the group is using right now. If people mix English and Kiswahili, \
-mix the same way (natural code-switching). Use simple Kiswahili and simple English.
+- Language: match the group. If they speak only English, answer in English; only Kiswahili, answer in \
+Kiswahili. If they have used BOTH languages, code-switch naturally like a Kenyan/Tanzanian student would: \
+at least one segment in Kiswahili and one in English. Use simple Kiswahili and simple English.
 - If the discussion has drifted from the topic, gently connect it back.
 - The transcript comes from automatic speech recognition and can contain errors; never quote \
 garbled words, and if something is unclear, do not guess wildly.
@@ -208,7 +217,8 @@ ACTION_BRIEF = {
                "connect two ideas, or ask a follow-up.",
     "lull": "The group has gone quiet. Re-open the discussion: offer a fresh angle or a concrete "
             "example on the topic, then ask an easy open question.",
-    "close": "Time is up. Summarise the main ideas you heard in one or two sentences and thank the group.",
+    "close": "Time is up. Summarise the main ideas you heard in at most two short sentences (max 50 words) "
+             "and thank the group.",
     "opening": "Open the discussion: introduce the question below in one or two friendly sentences.",
 }
 
@@ -224,7 +234,17 @@ class Contribution:
         return " ".join(t for _, t in self.segments)
 
 
-def validate(obj: dict | None, max_chars: int = 320) -> Contribution | None:
+def shorten(text: str, max_words: int) -> str:
+    """Spoken output must stay short: cut at the last sentence end within max_words."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    cut = " ".join(words[:max_words])
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    return cut[:end + 1] if end > 10 else cut.rstrip(",;:") + "..."
+
+
+def validate(obj: dict | None, max_chars: int = 400, max_words: int = 45) -> Contribution | None:
     """Turn model JSON into something the robot may say, or None if unusable."""
     if not obj:
         return None
@@ -244,6 +264,14 @@ def validate(obj: dict | None, max_chars: int = 320) -> Contribution | None:
         out.append((lang, text))
     if not out or sum(len(t) for _, t in out) > max_chars:
         return None
+    budget, short = max_words, []
+    for lang, text in out:                       # keep the word budget across segments
+        if budget <= 3:
+            break
+        t = shorten(text, budget)
+        short.append((lang, t))
+        budget -= len(t.split())
+    out = short
     kind = str(obj.get("kind", "opinion"))
     return Contribution(kind if kind in ("opinion", "followup", "summary", "bridge", "question") else "opinion",
                         out, "model")
@@ -272,7 +300,8 @@ class Brain:
         user = (f"Topic: {self.topic.get('title', '')}\n{self.topic.get('intro', '')}\n"
                 f"Discussion questions:\n{qs}\n\n"
                 f"People present: {n_people}\n\nRecent discussion:\n{transcript.render(names=names)}\n\n"
-                f"Group's current language: {transcript.last_lang()}\n\n"
+                f"Languages used recently (turns): {transcript.language_mix() or 'none yet'}; "
+                f"last speaker used: {transcript.last_lang()}\n\n"
                 f"Your task now: {ACTION_BRIEF[action]}")
         return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
@@ -281,7 +310,7 @@ class Brain:
         if self.chat is not None and self.chat.available:
             reply = self.chat.chat(self.messages(action, transcript, n_people, names or {}),
                                    deadline_s=self.deadline_s)
-            c = validate(extract_json(reply))
+            c = validate(extract_json(reply), max_words=60 if action == "close" else 45)
             if c:
                 c.source = getattr(self.chat, "used", None) or "model"
                 return c

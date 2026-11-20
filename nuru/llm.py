@@ -102,10 +102,18 @@ def extract_json(text: str | None) -> dict | None:
 
 
 class FallbackChat:
-    """Try each client in order (MiniMax first, Groq second)."""
+    """Several chat clients, preferred first (MiniMax), backup second (Groq).
 
-    def __init__(self, clients: list[ChatClient]):
+    strategy "race" (default): ask all at once; use the preferred answer if it
+    arrives within prefer_wait_s, otherwise the first usable answer. Keeps the
+    robot's thinking pause short even when the preferred model is slow.
+    strategy "sequential": try one after the other.
+    """
+
+    def __init__(self, clients: list[ChatClient], strategy: str = "race", prefer_wait_s: float = 3.0):
         self.clients = [c for c in clients if c.available]
+        self.strategy = strategy
+        self.prefer_wait_s = prefer_wait_s
         self.used = None
 
     @property
@@ -113,6 +121,8 @@ class FallbackChat:
         return bool(self.clients)
 
     def chat(self, messages, temperature=0.7, deadline_s: float = 8.0) -> str | None:
+        if self.strategy == "race" and len(self.clients) > 1:
+            return self._race(messages, temperature, deadline_s)
         t_end = time.time() + deadline_s
         for c in self.clients:
             left = t_end - time.time()
@@ -122,6 +132,36 @@ class FallbackChat:
             if out:
                 self.used = c.name
                 return out
+        self.used = None
+        return None
+
+
+    def _race(self, messages, temperature, deadline_s):
+        import threading
+        results: dict = {}
+        done = threading.Event()
+
+        def ask(c):
+            out = c.chat(messages, temperature, timeout_s=min(c.timeout_s, deadline_s))
+            results[c.name] = out
+            done.set()
+        for c in self.clients:
+            threading.Thread(target=ask, args=(c,), daemon=True).start()
+        t0 = time.time()
+        first = self.clients[0].name
+        while time.time() - t0 < deadline_s:
+            if results.get(first):                                   # preferred model answered
+                self.used = first
+                return results[first]
+            if time.time() - t0 >= self.prefer_wait_s or len(results) == len(self.clients):
+                for c in self.clients[1:]:
+                    if results.get(c.name):
+                        self.used = c.name
+                        return results[c.name]
+                if len(results) == len(self.clients):
+                    break                                            # everyone answered, nothing usable
+            done.wait(0.05)
+            done.clear()
         self.used = None
         return None
 
@@ -136,7 +176,7 @@ def make_chat(L: dict) -> FallbackChat:
                                   timeout_s=float(p.get("timeout_s", 8.0)),
                                   json_mode=bool(p.get("json_mode", False)),
                                   max_tokens=int(p.get("max_tokens", 300))))
-    return FallbackChat(clients)
+    return FallbackChat(clients, cfg.get("strategy", "race"), float(cfg.get("prefer_wait_s", 3.0)))
 
 
 # ----------------------------------------------------------------- speech
@@ -154,6 +194,19 @@ def to_wav(audio: np.ndarray, sr: int = 16000) -> bytes:
     return buf.getvalue()
 
 
+def speech_text(j: dict, no_speech_max: float = 0.6) -> str:
+    """Whisper 'hears' words in noise (classic: "Thank you.", "you"). Keep only
+    segments Whisper itself thinks are speech, and only text with letters."""
+    segs = j.get("segments")
+    if isinstance(segs, list) and segs:
+        text = " ".join(str(sg.get("text", "")).strip() for sg in segs
+                        if float(sg.get("no_speech_prob", 0.0)) <= no_speech_max)
+    else:
+        text = str(j.get("text") or "")
+    text = " ".join(text.split())
+    return text if any(ch.isalpha() for ch in text) else ""
+
+
 class Transcriber:
     """Groq Whisper. Language is auto-detected per utterance, so English,
     Kiswahili and mixed speech all work without telling it which to expect."""
@@ -165,6 +218,7 @@ class Transcriber:
         self.model = cfg.get("model", "whisper-large-v3")
         self.prompt = cfg.get("prompt", "")
         self.timeout_s = float(cfg.get("timeout_s", 8.0))
+        self.no_speech_max = float(cfg.get("no_speech_max", 0.6))
         self.last_error = None
 
     @property
@@ -188,7 +242,7 @@ class Transcriber:
                 return None
             j = r.json()
             lang = str(j.get("language", "")).lower()
-            return {"text": (j.get("text") or "").strip(), "lang": WHISPER_LANG.get(lang, lang or "en")}
+            return {"text": speech_text(j, self.no_speech_max), "lang": WHISPER_LANG.get(lang, lang or "en")}
         except (requests.RequestException, ValueError) as e:
             self.last_error = str(e)
             log.warning("transcription failed: %s", e)

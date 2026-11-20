@@ -152,22 +152,25 @@
     }
   },
   "llm": {
-    "_comment": "Chat models, tried in this order. Both use the OpenAI-compatible API. MiniMax China accounts use https://api.minimaxi.com/v1. If MiniMax is too slow in rehearsal, put groq first.",
+    "_comment": "Chat models, tried in this order. Both use the OpenAI-compatible API. Tested 20 Nov 2026: MiniMax-M3 ~2 s, Groq openai/gpt-oss-120b ~1 s. List models: GET <base_url>/models. MiniMax China accounts use https://api.minimaxi.com/v1.",
     "order": [
       "minimax",
       "groq"
     ],
+    "strategy": "race",
+    "prefer_wait_s": 3.0,
+    "_strategy_comment": "race: ask both models at once, use MiniMax if it answers within prefer_wait_s, otherwise Groq. sequential: one after the other.",
     "minimax": {
       "base_url": "https://api.minimax.io/v1",
-      "model": "MiniMax-M2",
+      "model": "MiniMax-M3",
       "timeout_s": 7.0,
-      "max_tokens": 1000
+      "max_tokens": 1500
     },
     "groq": {
       "base_url": "https://api.groq.com/openai/v1",
-      "model": "llama-3.3-70b-versatile",
-      "timeout_s": 5.0,
-      "max_tokens": 300,
+      "model": "openai/gpt-oss-120b",
+      "timeout_s": 3.0,
+      "max_tokens": 1500,
       "json_mode": true
     }
   },
@@ -177,7 +180,8 @@
     "base_url": "https://api.groq.com/openai/v1",
     "model": "whisper-large-v3",
     "timeout_s": 8.0,
-    "prompt": "Mazungumzo darasani kwa Kiingereza na Kiswahili. A classroom discussion in English and Kiswahili."
+    "prompt": "Mazungumzo darasani kwa Kiingereza na Kiswahili. A classroom discussion in English and Kiswahili.",
+    "no_speech_max": 0.6
   },
   "appearance": {
     "_comment": "Expression, clothing colour and type from one camera snapshot at the start (nuru/appearance.py). mention: 'greeting' = address each person once after the group greeting; 'never' = only log it. Snapshot is not stored.",
@@ -186,11 +190,11 @@
     "wait_s": 2.0
   },
   "vision": {
-    "_comment": "Vision model for appearance. Groq model names change; check https://console.groq.com/docs/vision and update 'model' if calls fail.",
-    "provider": "groq",
-    "base_url": "https://api.groq.com/openai/v1",
-    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "_comment": "Vision model for appearance. Tested 20 Nov 2026: MiniMax-M3.1-Flash ~1.2 s (Groq had no working vision model).",
+    "provider": "minimax",
+    "base_url": "https://api.minimax.io/v1",
+    "model": "MiniMax-M3.1-Flash",
     "timeout_s": 6.0,
-    "json_mode": true
+    "json_mode": false
   }
 }

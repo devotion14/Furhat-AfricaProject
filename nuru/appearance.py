@@ -1,6 +1,6 @@
 """What people look like when they arrive: expression, clothing colour and type.
 
-One snapshot from the Furhat camera is sent to a vision model (Groq, set in
+One snapshot from the Furhat camera is sent to a vision model (MiniMax, set in
 live.json -> "vision") while the robot is greeting, so there is no extra wait.
 The model must answer with JSON; anything else is ignored. It is told to
 describe only clearly visible things and never to guess age, gender,
@@ -86,7 +86,7 @@ class Appearance:
         self.host = cfg.host
         self.client = ChatClient("vision", V.get("base_url", "https://api.groq.com/openai/v1"),
                                  V.get("model", ""), load_key(V.get("provider", "groq")),
-                                 timeout_s=float(V.get("timeout_s", 6.0)), max_tokens=300,
+                                 timeout_s=float(V.get("timeout_s", 6.0)), max_tokens=1500,
                                  json_mode=bool(V.get("json_mode", True)))
         self.last_error = None
 

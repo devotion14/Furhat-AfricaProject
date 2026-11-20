@@ -114,3 +114,38 @@ def test_appearance_validation_and_line():
     assert r[1]["expression"] == "calm"                                  # unknown -> neutral
     assert clean({"people": [{"expression": "calm"}]}, 2) is None        # wrong number of people
     assert greeting_line(r[0]).startswith("Hello to you in the blue school uniform.")
+
+
+def test_whisper_hallucination_filter():
+    from nuru.llm import speech_text
+    assert speech_text({"text": " you", "segments": [{"text": " you", "no_speech_prob": 0.81}]}) == ""
+    assert speech_text({"text": " .", "segments": [{"text": " .", "no_speech_prob": 0.1}]}) == ""
+    assert speech_text({"text": "Habari", "segments": [{"text": " Habari", "no_speech_prob": 0.05}]}) == "Habari"
+
+
+def test_long_model_output_is_shortened():
+    from nuru.discussion import shorten
+    long = "First sentence is here. " + "word " * 60
+    assert shorten(long, 45) == "First sentence is here."
+    c = validate({"segments": [{"lang": "en", "text": "One two three. " * 20}]}, max_words=10)
+    assert len(c.text.split()) <= 10
+
+
+def test_race_prefers_first_model_but_does_not_wait_forever():
+    import time as _t
+    from nuru.llm import FallbackChat
+
+    class Fake:
+        def __init__(self, name, delay, out):
+            self.name, self.delay, self.out, self.timeout_s, self.available = name, delay, out, 5, True
+
+        def chat(self, m, temperature=0.7, timeout_s=None):
+            _t.sleep(self.delay)
+            return self.out
+    fc = FallbackChat([Fake("minimax", 0.1, "A"), Fake("groq", 0.05, "B")], prefer_wait_s=0.5)
+    assert fc.chat([], deadline_s=2) == "A" and fc.used == "minimax"
+    fc = FallbackChat([Fake("minimax", 1.5, "A"), Fake("groq", 0.05, "B")], prefer_wait_s=0.3)
+    t0 = _t.time()
+    assert fc.chat([], deadline_s=2) == "B" and _t.time() - t0 < 0.6
+    fc = FallbackChat([Fake("minimax", 0.05, None), Fake("groq", 0.05, None)], prefer_wait_s=0.3)
+    assert fc.chat([], deadline_s=1) is None
