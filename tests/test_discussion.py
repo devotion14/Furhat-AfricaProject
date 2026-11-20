@@ -87,3 +87,20 @@ def test_backs_off_and_closes_when_nobody_answers():
 def test_no_targeted_invite_while_speakers_unknown():
     s = state(heard_s={"p1": 5, "p2": 0}, unattributed_s=30)
     assert plan_floor(s).action != "invite"
+
+
+def test_camera_hint_links_voice():
+    l = SpeakerLinker()
+    assert l.link("V1", ["p1", "p2"], seen="p1") == ("p1", "camera: mouth moving")
+    assert l.link("V1", ["p1", "p2"], seen="p2")[0] == "p1"             # a known voice wins over the camera
+    assert l.link(None, ["p1", "p2"], seen="p2")[0] == "p2"
+
+
+def test_camera_seat_timeline():
+    from nuru.speaker_cam import CameraSpeakerHint
+    h = CameraSpeakerHint.__new__(CameraSpeakerHint)
+    import collections, threading
+    h.events, h._lock = collections.deque([(0.0, None), (1.0, "A"), (4.0, None), (5.0, "B")]), threading.Lock()
+    assert h.seat_during(1.0, 4.5) == "A"
+    assert h.seat_during(3.5, 6.0) is None or h.seat_during(3.5, 6.0) == "B"
+    assert h.seat_during(0.0, 0.5) is None

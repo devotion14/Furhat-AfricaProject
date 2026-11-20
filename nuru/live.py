@@ -440,6 +440,14 @@ class LiveSession:
             self._print("INFO", f"listening: {D.get('audio_source', 'furhat')} audio, voiceprints {emb.kind}, "
                                 f"speech-to-text {'Groq Whisper' if stt.available else 'OFF (no GROQ key)'}")
         self.listener = listener
+        self.cam = None
+        if D.get("camera_speaker", True) and not getattr(listener, "scripted", False):
+            try:
+                from .speaker_cam import CameraSpeakerHint
+                self.cam = CameraSpeakerHint(self.cfg, D)
+                self._print("INFO", "camera speaker hint: on (mouth movement links voices to faces)")
+            except Exception as e:                  # mediapipe/opencv/zmq missing: voiceprints only
+                self._print("INFO", f"camera speaker hint: off ({e})")
         models = [c.name for c in self.chat.clients]
         self._print("INFO", f"discussion model: {' -> '.join(models) if models else 'NONE (scripted lines only)'}")
         self.robot = _GatedRobot(self.robot, listener)
@@ -460,7 +468,10 @@ class LiveSession:
                     float(self.D.get("response_window_s", 8.0)) + 15:
                 invited = self._pending_invite[0]
             if u.person is None:
-                u.person, u.how = self.linker.link(u.voice, present, invited)
+                seen = None
+                if self.cam is not None and self.cam.available:
+                    seen = self.cam.person_for(self.cam.seat_during(u.start, u.end), p.people)
+                u.person, u.how = self.linker.link(u.voice, present, invited, seen=seen)
             self.transcript.add(u)
             who = u.person or f"voice {u.voice or '?'}"
             said = u.text if u.text else "(words not recognised)"
@@ -672,6 +683,8 @@ class LiveSession:
             self.sense.stop()
             if getattr(self, "listener", None) is not None:
                 self.listener.stop()
+            if getattr(self, "cam", None) is not None:
+                self.cam.stop()
             self.led("idle")
             self.log.write("session_end")
             self.log.close()

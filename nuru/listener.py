@@ -157,6 +157,8 @@ class Listener:
 class MockListener:
     """Scripted listener for --mock rehearsals: say(text, lang, voice, seconds)."""
 
+    scripted = True
+
     def __init__(self, on_utterance, speed: float = 1.0):
         self.on_utterance = on_utterance
         self.speed = speed

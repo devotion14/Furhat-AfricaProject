@@ -13,6 +13,7 @@ Two embedders:
 
 Voices are linked to the PEOPLE the camera sees by `SpeakerLinker`:
   * only one person present                  -> the voice is theirs
+  * the camera saw X's mouth moving (avsd)   -> the voice is X's
   * the robot just invited person X          -> the reply's voice is X's
   * all but one present person already have a voice -> a new voice is the remaining one
 """
@@ -140,14 +141,20 @@ class SpeakerLinker:
     def person_for(self, voice: str | None) -> str | None:
         return self.voice_to_person.get(voice) if voice else None
 
-    def link(self, voice: str | None, present: list[str], invited: str | None = None) -> tuple[str | None, str]:
+    def link(self, voice: str | None, present: list[str], invited: str | None = None,
+             seen: str | None = None) -> tuple[str | None, str]:
         """Attribute an utterance with this voice to a present person.
+        seen = the person whose mouth the camera saw moving (if available).
         -> (person id or None, how it was decided)."""
-        if not voice:
-            return None, "no voiceprint"
-        known = self.voice_to_person.get(voice)
+        known = self.voice_to_person.get(voice) if voice else None
         if known in present:
             return known, "known voice"
+        if seen in present:
+            if voice and seen not in self.voice_to_person.values():
+                self.voice_to_person[voice] = seen
+            return seen, "camera: mouth moving"
+        if not voice:
+            return None, "no voiceprint"
         if len(present) == 1:
             self.voice_to_person[voice] = present[0]
             return present[0], "only person present"
