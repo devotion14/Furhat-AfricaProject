@@ -71,6 +71,47 @@ All good - ready for a session.
 
 ---
 
+## Live discussion mode (`python -m nuru live`)
+
+The robot runs a whole small-group discussion by itself, in English and Kiswahili:
+
+1. **Notices people approaching** (Furhat face tracker), beckons from a distance, and greets the group.
+2. **Looks at each person**: one camera snapshot goes to a vision model, which gives expression, clothing
+   colour and clothing type. The robot then greets each person once ("Hello to you in the blue hoodie…"),
+   with a reassuring line for anyone who looks serious or nervous.
+3. **Listens without interrupting**: it transcribes everything said (Groq Whisper, English, Kiswahili or
+   mixed). It tells **voices apart** (voiceprints) and links each voice to a face. To do that it uses the
+   camera (whose mouth is moving), who answered an invitation, and who is left without a voice.
+4. **Takes part**: fixed rules decide *when* it may speak (only after a pause, never over someone).
+   MiniMax (with Groq as backup) decides *what* to say: balanced opinions, follow-ups and summaries, in the
+   language the group is using.
+5. **Invites quiet people** with the C3 cues from the paper (group glance, pair, short gaze with a soft nod,
+   "Je, una maoni? What do you think?", gentle release that never insists).
+6. **Never stalls**: if the model is slow, the robot shows it is thinking. If it fails, the robot uses
+   scripted lines. If nobody answers, it backs off, and it closes politely after three unanswered turns.
+
+```powershell
+# once: API keys (never committed)
+copy config\keys.example.json config\keys.json     # then paste your MiniMax and Groq keys
+# on the robot web UI: Settings -> External feeds -> enable Camera feed and Audio feed
+
+python -m nuru live                                   # the real thing
+python -m nuru live --mock --scenario discussion --speed 0.2   # rehearse without robot or keys
+python -m nuru live --questions                       # the Lab 1 flow (ask / listen / acknowledge)
+```
+
+All settings (rules, timings, models, languages, whether appearance is mentioned) are in
+[config/live.json](config/live.json). Code: [nuru/live.py](nuru/live.py) (loop),
+[nuru/discussion.py](nuru/discussion.py) (when and what to say), [nuru/listener.py](nuru/listener.py)
+(listening), [nuru/voices.py](nuru/voices.py) (voices), [nuru/appearance.py](nuru/appearance.py),
+[nuru/llm.py](nuru/llm.py) (cloud models).
+
+**What leaves the laptop:** audio clips of each utterance (to Groq for transcription), one camera snapshot
+per group (to Groq), and the recent transcript text (to MiniMax/Groq). Voiceprints stay on the laptop and
+are discarded after each interaction. Tell participants this before the session.
+
+---
+
 ## Automatic sessions and speaker detection
 
 Nuru can work out by itself who is speaking, using **Furhat's own camera and microphone**. No extra

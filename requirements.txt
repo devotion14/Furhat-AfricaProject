@@ -5,3 +5,8 @@ scipy>=1.10        # statistics and power analysis
 matplotlib>=3.7    # results figure
 sounddevice>=0.4   # optional: microphone VAD
 pytest>=7          # tests
+pyzmq>=25          # Furhat audio + camera feeds (live discussion mode)
+opencv-python>=4.8 # camera snapshot / face landmarks
+# Optional, better results (install on the demo laptop):
+#   mediapipe        camera speaker hint: whose mouth is moving (Python 3.10-3.12)
+#   resemblyzer      neural voiceprints for telling voices apart (pulls in torch)
