@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy this file to config/keys.json (git-ignored) and paste your keys. Or set MINIMAX_API_KEY / GROQ_API_KEY environment variables instead.",
+  "minimax_api_key": "",
+  "groq_api_key": ""
+}
