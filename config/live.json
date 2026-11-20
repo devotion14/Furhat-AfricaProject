@@ -1,48 +1,179 @@
 {
   "_comment": "Autonomous live mode (python -m nuru live). The robot senses people with its own camera and microphone, decides with the rules in nuru/live.py (plan_* functions) and acts through the cue engine in nuru/cues.py. No operator input is needed.",
-
   "_sense_comment": "Perception thresholds. A face must be seen for confirm_s before it counts, and missing for lost_after_s before the person counts as gone. Faces further than max_distance_m are ignored (passers-by).",
   "confirm_s": 1.0,
   "lost_after_s": 3.0,
   "max_distance_m": 2.5,
   "engage_distance_m": 1.6,
-
   "_listen_comment": "Furhat ASR: we only use whether and how long someone spoke, never the words. listen_timeout_s is a hard cap on one listen call.",
   "listen_language": "en-US",
   "listen_timeout_s": 20,
-
   "task": "T3",
   "n_questions": 2,
-
   "_mode_comment": "The social feature: how many people are present. 1 person -> 'solo' cues (direct, repair by repeating). 2+ people -> the group profile (C3 Nuru cues: group first, pair, short gaze, bilingual, never insists).",
   "group_profile": "c3",
-
+  "_interaction_comment": "What happens after the greeting. 'discussion' = the robot listens to the whole conversation, follows it in English and Kiswahili, contributes balanced opinions and invites quiet people (needs keys in config/keys.json; without them it still runs with scripted lines). 'questions' = Celestine's original Lab 1 flow (ask, listen, acknowledge; words are never used).",
+  "interaction": "discussion",
+  "discussion": {
+    "_comment": "Floor rules decide WHEN the robot speaks (nuru/discussion.py plan_floor); the model only decides WHAT. Times are seconds.",
+    "task": "T2",
+    "audio_source": "furhat",
+    "_audio_comment": "'furhat' = robot microphone via the Audio Feed (enable it in the robot web UI: Settings -> External feeds). 'mic' = laptop microphone (mic_device = number from: python -m sounddevice).",
+    "mic_device": null,
+    "mic_channel": 0,
+    "robot_channel": 1,
+    "vad_threshold_db": 10.0,
+    "neural_voiceprints": true,
+    "response_window_s": 8.0,
+    "filler_after_s": 1.5,
+    "model_deadline_s": 8.0,
+    "log_text": true,
+    "rules": {
+      "turn_gap_s": 1.5,
+      "lull_s": 6.0,
+      "respond_every": 3,
+      "min_robot_gap_s": 12.0,
+      "invite_gap_s": 35.0,
+      "quiet_share": 0.5,
+      "quiet_after_s": 25.0,
+      "duration_s": 300.0
+    },
+    "solo_rules": {
+      "respond_every": 1,
+      "min_robot_gap_s": 3.0
+    },
+    "fallback_lines": {
+      "respond": [
+        {
+          "en": "Interesting point. Does anyone see it differently?",
+          "sw": "Hilo ni wazo zuri. Kuna mtu anayeona tofauti?"
+        },
+        {
+          "en": "There are good arguments on both sides here. What else should we think about?",
+          "sw": "Kuna hoja nzuri pande zote. Tufikirie nini kingine?"
+        },
+        {
+          "en": "Thank you. Let's build on that idea.",
+          "sw": "Asanteni. Tuendeleze wazo hilo."
+        }
+      ],
+      "close": [
+        {
+          "en": "Thank you all, you shared many good ideas today.",
+          "sw": "Asanteni sana, mmetoa mawazo mazuri leo."
+        }
+      ]
+    },
+    "filler": {
+      "sw": "Mmm...",
+      "en": "Hmm, let me think."
+    }
+  },
   "solo": {
     "gaze_hold_s": 3.0,
     "smile": true,
     "nod": "Nod",
     "prompt_mode": "en"
   },
-
   "led": {
-    "idle": [0, 0, 0],
-    "speaking": [30, 30, 30],
-    "listening": [0, 40, 110],
-    "attention": [80, 50, 0]
+    "idle": [
+      0,
+      0,
+      0
+    ],
+    "speaking": [
+      30,
+      30,
+      30
+    ],
+    "listening": [
+      0,
+      40,
+      110
+    ],
+    "attention": [
+      80,
+      50,
+      0
+    ],
+    "thinking": [
+      60,
+      0,
+      90
+    ]
   },
-
   "lines": {
-    "beckon":        {"sw": "Karibu!", "en": "Come closer, I would like to talk with you."},
-    "greet_solo":    {"sw": "Habari!", "en": "Hello, I am Nuru. Let's have a short chat. There are no wrong answers."},
-    "greet_group":   {"sw": "Habari zenu! Karibuni.", "en": "Hello everyone, I am Nuru. Let's discuss a question together. There are no wrong answers, and you can always pass."},
-    "welcome":       {"sw": "Karibu!", "en": "Welcome, please join us."},
-    "ack":           {"sw": "Asante.", "en": "Thank you."},
-    "ack_group":     {"sw": "Asanteni.", "en": "Thank you."},
-    "repair":        {"en": "Sorry, I didn't catch that. Take your time."},
-    "repair_tech":   {"en": "Sorry, I could not hear properly."},
-    "release_solo":  {"en": "That's okay. Let's try another one."},
-    "someone_left":  {"en": "Goodbye, thank you for joining."},
-    "closing_solo":  {"sw": "Asante sana!", "en": "Thank you for talking with me. Goodbye!"},
-    "closing_group": {"sw": "Asanteni sana!", "en": "Thank you all for sharing your ideas. Goodbye!"}
+    "beckon": {
+      "sw": "Karibu!",
+      "en": "Come closer, I would like to talk with you."
+    },
+    "greet_solo": {
+      "sw": "Habari!",
+      "en": "Hello, I am Nuru. Let's have a short chat. There are no wrong answers."
+    },
+    "greet_group": {
+      "sw": "Habari zenu! Karibuni.",
+      "en": "Hello everyone, I am Nuru. Let's discuss a question together. There are no wrong answers, and you can always pass."
+    },
+    "welcome": {
+      "sw": "Karibu!",
+      "en": "Welcome, please join us."
+    },
+    "ack": {
+      "sw": "Asante.",
+      "en": "Thank you."
+    },
+    "ack_group": {
+      "sw": "Asanteni.",
+      "en": "Thank you."
+    },
+    "repair": {
+      "en": "Sorry, I didn't catch that. Take your time."
+    },
+    "repair_tech": {
+      "en": "Sorry, I could not hear properly."
+    },
+    "release_solo": {
+      "en": "That's okay. Let's try another one."
+    },
+    "someone_left": {
+      "en": "Goodbye, thank you for joining."
+    },
+    "closing_solo": {
+      "sw": "Asante sana!",
+      "en": "Thank you for talking with me. Goodbye!"
+    },
+    "closing_group": {
+      "sw": "Asanteni sana!",
+      "en": "Thank you all for sharing your ideas. Goodbye!"
+    }
+  },
+  "llm": {
+    "_comment": "Chat models, tried in this order. Both use the OpenAI-compatible API. MiniMax China accounts use https://api.minimaxi.com/v1. If MiniMax is too slow in rehearsal, put groq first.",
+    "order": [
+      "minimax",
+      "groq"
+    ],
+    "minimax": {
+      "base_url": "https://api.minimax.io/v1",
+      "model": "MiniMax-M2",
+      "timeout_s": 7.0,
+      "max_tokens": 1000
+    },
+    "groq": {
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "llama-3.3-70b-versatile",
+      "timeout_s": 5.0,
+      "max_tokens": 300,
+      "json_mode": true
+    }
+  },
+  "stt": {
+    "_comment": "Speech-to-text. Whisper detects the language per utterance (English, Kiswahili, or mixed). The prompt nudges it towards classroom English/Kiswahili.",
+    "provider": "groq",
+    "base_url": "https://api.groq.com/openai/v1",
+    "model": "whisper-large-v3",
+    "timeout_s": 8.0,
+    "prompt": "Mazungumzo darasani kwa Kiingereza na Kiswahili. A classroom discussion in English and Kiswahili."
   }
 }

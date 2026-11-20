@@ -76,3 +76,14 @@ def test_voice_bank_and_linker():
     assert l.link("V1", ["p1", "p2"]) == (None, "not yet linked to a face")
     assert l.link("V1", ["p1", "p2"], invited="p2")[0] == "p2"
     assert l.link("V2", ["p1", "p2"])[0] == "p1"
+
+
+def test_backs_off_and_closes_when_nobody_answers():
+    assert plan_floor(state(silence_s=7, since_robot_s=7, robot_turns_since_human=1)).action == "wait"
+    assert plan_floor(state(silence_s=13, since_robot_s=13, robot_turns_since_human=1)).action == "lull"
+    assert plan_floor(state(robot_turns_since_human=3)).action == "close"
+
+
+def test_no_targeted_invite_while_speakers_unknown():
+    s = state(heard_s={"p1": 5, "p2": 0}, unattributed_s=30)
+    assert plan_floor(s).action != "invite"

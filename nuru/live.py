@@ -32,6 +32,7 @@ Failure handling by design (see plan_after_listen):
 from __future__ import annotations
 
 import logging
+import queue
 import random
 import threading
 import time
@@ -367,6 +368,10 @@ class LiveSession:
         self.log.write("interaction_start", value={"mode": mode, "n": p.n})
         self._print("PLAN", f"=== interaction {self.n_sessions} starts in {mode.upper()} mode ===")
         self.act_greet(p, mode)
+        if self.L.get("interaction") == "discussion" and getattr(self, "listener", None) is not None:
+            self.discuss(p, mode)
+            self.log.write("interaction_end", value={"heard_s": self.mem.heard_s, "invited": self.mem.invited})
+            return
         task = self.cfg.tasks["tasks"][self.L.get("task", "T3")]
         self.look(self.centre(p), "")
         self.say_line_text(task["intro"])
@@ -401,6 +406,217 @@ class LiveSession:
         self.log.write("robot_say", value=text, lang=lang)
         self.robot.say(text, lang=lang, blocking=True)
 
+
+    # =========================================================================
+    # DISCUSSION MODE (live.json "interaction": "discussion")
+    #   SENSE  faces (perception.py) + passive listening (listener.py):
+    #          what was said, in which language, by which voice -> which person
+    #   PLAN   discussion.plan_floor: WHEN to speak (rules, never interrupts)
+    #          discussion.Brain:      WHAT to say (MiniMax -> Groq -> scripted)
+    #   ACT    speech in en/sw segments, gaze, nods, LED; C3 cues for invitations
+    # =========================================================================
+    def setup_discussion(self, listener=None):
+        from .discussion import Transcript
+        from .llm import Transcriber, make_chat
+        from .voices import Embedder, SpeakerLinker, VoiceBank
+        D = self.D = self.L.get("discussion", {})
+        self.transcript = Transcript()
+        self.linker = SpeakerLinker()
+        self.bank = None
+        self._utt_q: queue.Queue = queue.Queue()
+        self._pending_invite = None                  # (person id, time)
+        self.chat = make_chat(self.L)
+        if listener is None:
+            from .listener import Listener
+            emb = Embedder(prefer_neural=D.get("neural_voiceprints", True))
+            self.bank = VoiceBank(emb.threshold)
+            stt = Transcriber(self.L)
+            listener = Listener(self._utt_q.put, stt, emb, self.bank,
+                                threshold_db=float(D.get("vad_threshold_db", 10.0)))
+            if D.get("audio_source", "furhat") == "furhat":
+                listener.start_furhat(self.cfg.host, int(D.get("mic_channel", 0)), int(D.get("robot_channel", 1)))
+            else:
+                listener.start_mic(D.get("mic_device"))
+            self._print("INFO", f"listening: {D.get('audio_source', 'furhat')} audio, voiceprints {emb.kind}, "
+                                f"speech-to-text {'Groq Whisper' if stt.available else 'OFF (no GROQ key)'}")
+        self.listener = listener
+        models = [c.name for c in self.chat.clients]
+        self._print("INFO", f"discussion model: {' -> '.join(models) if models else 'NONE (scripted lines only)'}")
+        self.robot = _GatedRobot(self.robot, listener)
+
+    def _scale(self, secs: float) -> float:
+        """Real seconds -> scenario seconds (mock runs faster with speed < 1)."""
+        return secs / self.speed if self.speed else secs
+
+    def _drain_utterances(self, p: Percept):
+        present = [x.id for x in p.people]
+        while True:
+            try:
+                u = self._utt_q.get_nowait()
+            except queue.Empty:
+                return
+            invited = None
+            if self._pending_invite and self._scale(u.end - self._pending_invite[1]) <= \
+                    float(self.D.get("response_window_s", 8.0)) + 15:
+                invited = self._pending_invite[0]
+            if u.person is None:
+                u.person, u.how = self.linker.link(u.voice, present, invited)
+            self.transcript.add(u)
+            who = u.person or f"voice {u.voice or '?'}"
+            said = u.text if u.text else "(words not recognised)"
+            self._print("SENSE", f"heard {who} ({u.voice or '-'}, {u.how}) [{u.lang or '?'}] "
+                                 f"{self._scale(u.duration):.1f} s: {said}")
+            self.log.write("utterance", u.person or "", u.text if self.D.get("log_text", True) else "",
+                           voice=u.voice, lang=u.lang, duration_s=round(self._scale(u.duration), 2), how=u.how)
+            if u.person:
+                self.mem.heard_s[u.person] = self.mem.heard_s.get(u.person, 0.0) + self._scale(u.duration)
+            if invited and u.person == invited:
+                self._pending_invite = None
+                x = p.get(invited)
+                if x:
+                    self.look(x.location)
+                self.robot.gesture(resolve_gesture("NuruSoftNod"), blocking=False)   # backchannel: "I hear you"
+                self.look(self.centre(p))
+
+    def _floor_state(self, p: Percept, t0, last_robot, last_invite):
+        from .discussion import FloorState
+        now = time.time()
+        return FloorState(
+            someone_speaking=self.listener.someone_speaking,
+            robot_speaking=self.listener.robot_speaking,
+            silence_s=self._scale(self.listener.silence_s()),
+            since_robot_s=self._scale(now - last_robot),
+            since_invite_s=self._scale(now - last_invite),
+            elapsed_s=self._scale(now - t0),
+            human_turns_since_robot=self.transcript.human_turns_since_robot(),
+            present=[x.id for x in p.people],
+            dwell_s={x.id: self._scale(p.dwell_s(x.id)) for x in p.people},
+            heard_s=dict(self.mem.heard_s),
+            last_invited=self.mem.invited[-1] if self.mem.invited else None,
+            robot_turns_since_human=self.transcript.robot_turns_since_human(),
+            unattributed_s=self._scale(self.transcript.unattributed_s()))
+
+    def _names(self, p: Percept) -> dict:
+        return {x.id: f"Person {i + 1}" for i, x in enumerate(p.people)}
+
+    def think(self, action: str, p: Percept, brain, allow_abort: bool = True):
+        """Ask the model in the background. While waiting the robot shows it is
+        thinking (LED + look away briefly + filler if slow). If someone starts
+        talking meanwhile, the contribution is dropped: the robot never interrupts."""
+        box = {}
+        th = threading.Thread(target=lambda: box.setdefault("c", brain.compose(
+            action, self.transcript, p.n, self._names(p))), daemon=True)
+        th.start()
+        self.led("thinking")
+        t0, filled = time.time(), False
+        while th.is_alive():
+            if allow_abort and self.listener.someone_speaking:
+                self._print("PLAN", "someone started talking while the robot was thinking -> drop it, keep listening")
+                self.log.write("decision", "", "yield", reason="speech during thinking")
+                self.led("idle")
+                return None
+            if not filled and self._scale(time.time() - t0) > float(self.D.get("filler_after_s", 1.5)):
+                filled = True
+                c = self.centre(p)
+                self.robot.attend_location((c[0] + 0.3, c[1] + 0.25, c[2]))      # "thinking" glance up
+                self.robot.gesture(resolve_gesture("NuruSoftNod"), blocking=False)
+            th.join(0.1)
+        self.led("idle")
+        return box.get("c")
+
+    def speak(self, c, p: Percept, to_group: bool = True):
+        from .discussion import RobotTurn, contribution_log
+        if to_group:
+            self.look(self.centre(p), "the group")
+        if c.kind in ("opinion", "bridge"):
+            self.robot.gesture(resolve_gesture("NuruSoftNod"), blocking=False)
+        self.led("speaking")
+        self._print("ACT", f"[{c.kind} via {c.source}]")
+        for lang, text in c.segments:
+            self._print("ACT", f"say ({lang}) {text}")
+            self.robot.say(text, lang=lang, blocking=True)
+        self.led("idle")
+        self.log.write("robot_contribution", "", contribution_log(c))
+        self.transcript.add(RobotTurn(c.text, c.kind))
+
+    def discuss(self, p: Percept, mode: str):
+        from .discussion import Brain, Contribution, plan_floor
+        D = self.D
+        rules = dict(D.get("rules", {}))
+        if mode == "solo":
+            rules.update(D.get("solo_rules", {}))
+        task = self.cfg.tasks["tasks"][D.get("task", self.L.get("task", "T3"))]
+        brain = Brain(self.chat, task, D.get("fallback_lines", {}), self.rng, float(D.get("model_deadline_s", 8.0)))
+        group_prof = self.cfg.profile(self.L.get("group_profile", "c3"))
+        while not self._utt_q.empty():                 # forget anything heard before the greeting
+            self._utt_q.get_nowait()
+        if self.bank is not None:
+            self.bank.reset()
+        self.linker.reset()
+        self.transcript.items.clear()
+
+        # opening: the task intro and first question are scripted (reliable, no model latency)
+        self.look(self.centre(p), "the group")
+        self.say_line_text(task["intro"])
+        self.speak(Contribution("question", [("en", brain.next_question() or task["intro"])], "script"), p)
+        t0 = last_robot = time.time()
+        last_invite = 0.0
+        last_reason = None
+        while not self.stop_event.is_set():
+            p = self.percept()
+            if p.n == 0:
+                self._decided(Decision("farewell", reason="everyone left"))
+                return
+            for x in [x for x in p.people if x.id not in self.mem.greeted]:
+                self._decided(Decision("welcome", x.id, reason="arrived during the discussion"))
+                self.act_welcome(p, x.id)
+                last_robot = time.time()
+            self._drain_utterances(p)
+
+            # an invitation nobody answered -> gentle release (C3: never insist)
+            if self._pending_invite and not self.listener.someone_speaking and \
+                    self._scale(time.time() - self._pending_invite[1]) > float(D.get("response_window_s", 8.0)):
+                pid = self._pending_invite[0]
+                self._pending_invite = None
+                self._decided(Decision("release", pid, mode, reason="invitee did not answer"))
+                self.log.write("no_response", pid)
+                self.act_release(p, "group", group_prof)
+                last_robot = time.time()
+                continue
+
+            if self._pending_invite:                   # waiting for the invitee: keep the floor open
+                self._sleep(0.25)
+                continue
+            d = plan_floor(self._floor_state(p, t0, last_robot, last_invite), rules)
+            if d.action == "wait":
+                if d.reason != last_reason and "speaking" not in d.reason:
+                    self.log.write("floor", "", "wait", reason=d.reason)
+                last_reason = d.reason
+                self._sleep(0.25)
+                continue
+            last_reason = None
+            if d.action == "invite":
+                if self._pending_invite:
+                    self._sleep(0.25)
+                    continue
+                self._decided(Decision("invite", d.target, mode, d.reason))
+                self.act_invite(p, d.target, group_prof)
+                self._pending_invite = (d.target, time.time())
+                last_invite = last_robot = time.time()
+                continue
+            self._decided(Decision(d.action, mode=mode, reason=d.reason))
+            c = self.think(d.action, p, brain, allow_abort=d.action != "close")
+            if c is None:
+                continue
+            if c.source == "fallback":
+                self.log.write("model_fallback", "", d.action, error=brain.last_error)
+            self.speak(c, p)
+            last_robot = time.time()
+            if d.action == "close":
+                self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
+                self.say_line("closing_solo" if p.n == 1 else "closing_group")
+                return
+
     def wait_until_empty(self, max_s=60.0):
         """After an interaction, do not re-greet the same people: wait until they leave."""
         t0 = time.time()
@@ -415,6 +631,13 @@ class LiveSession:
 
     def run(self, max_interactions: int | None = None):
         self.sense.start()
+        if self.L.get("interaction") == "discussion" and getattr(self, "listener", None) is None:
+            try:
+                self.setup_discussion()
+            except Exception as e:                     # no audio feed / no zmq: keep the Lab 1 flow
+                log.exception("discussion setup failed")
+                self._print("ERROR", f"discussion mode unavailable ({e}) - using the question flow")
+                self.L = {**self.L, "interaction": "questions"}
         self._print("INFO", "live mode: waiting for people (Ctrl+C to stop)")
         self.log.write("session_start", value={"mode": "live"})
         try:
@@ -447,10 +670,31 @@ class LiveSession:
                     self._sleep(1.0)
         finally:
             self.sense.stop()
+            if getattr(self, "listener", None) is not None:
+                self.listener.stop()
             self.led("idle")
             self.log.write("session_end")
             self.log.close()
             self._print("INFO", f"log: {self.log.path}")
+
+
+class _GatedRobot:
+    """Wraps the robot so the listener ignores the mic while the robot speaks
+    (needed with a laptop mic; with the Furhat audio feed the robot channel
+    does this as well)."""
+
+    def __init__(self, robot, listener):
+        self._robot, self._listener = robot, listener
+
+    def say(self, text, lang="en", blocking=True):
+        self._listener.set_robot_speaking(True)
+        try:
+            return self._robot.say(text, lang=lang, blocking=blocking)
+        finally:
+            self._listener.set_robot_speaking(False)
+
+    def __getattr__(self, name):
+        return getattr(self._robot, name)
 
 
 # =============================================================================
@@ -488,3 +732,61 @@ def play_scenario(robot, name: str, speed: float, stop: threading.Event):
             robot.scene = scene
             print(f"  [scene] t={t}s: {len(scene)} face(s) {[f['id'] for f in scene]}", flush=True)
     threading.Thread(target=run, daemon=True, name="nuru-scenario").start()
+
+
+# Discussion rehearsal (--mock --scenario discussion): p1 talks a lot, p2 only when invited.
+DISCUSSION_SCRIPT = [
+    ("wait_robot", 1),
+    ("say", "V1", "en", "I think we should go to Mombasa, the students can learn about the coast and its history.", 5),
+    ("pause", 1),
+    ("say", "V1", "sw", "Pia Fort Jesus ni mahali pazuri sana kujifunza historia.", 4),
+    ("pause", 1),
+    ("say", "V1", "en", "And it is not too expensive if we take the train.", 3),
+    ("wait_robot", 2),
+    ("say", "V1", "en", "Yes, but some parents might worry about the cost and the long trip.", 4),
+    ("wait_invite", "p2"),
+    ("pause", 2),
+    ("say", "V2", "sw", "Mimi nafikiri tunaweza kwenda Nairobi National Park, ni karibu na ni rahisi.", 5),
+    ("pause", 1.8),
+    ("say", "V2", "en", "Yeah, and we can learn about wildlife conservation there.", 3),
+    ("pause", 10),
+    ("wait_robot", 4),
+    ("say", "V1", "en", "Maybe we can vote between the two places.", 3),
+    ("pause", 15),
+]
+
+
+def play_discussion(sess, robot, listener, speed: float, stop: threading.Event):
+    """Scripted camera + voices for the discussion rehearsal."""
+    from .discussion import RobotTurn
+
+    def wait(cond, max_s):
+        t_end = time.time() + max_s * speed
+        while not cond() and time.time() < t_end:
+            if stop.wait(0.05):
+                return False
+        return True
+
+    def run():
+        if stop.wait(1 * speed):
+            return
+        robot.scene = [_face("p1", -0.4, 1.1), _face("p2", 0.4, 1.1)]
+        print("  [scene] 2 faces ['p1', 'p2']", flush=True)
+        for step in DISCUSSION_SCRIPT:
+            if stop.is_set():
+                return
+            kind = step[0]
+            if kind == "wait_robot":
+                wait(lambda: sum(isinstance(u, RobotTurn) for u in sess.transcript.items) >= step[1], 60)
+            elif kind == "wait_invite":
+                wait(lambda: sess._pending_invite and sess._pending_invite[0] == step[1], 60)
+            elif kind == "pause":
+                stop.wait(step[1] * speed)
+            else:
+                _, voice, lang, text, secs = step
+                print(f"  [human] {voice} ({lang}): {text}", flush=True)
+                listener.say(text, lang, voice, secs)
+        wait(lambda: False, 200)                    # stay until the robot closes
+        robot.scene = []
+        print("  [scene] everyone left", flush=True)
+    threading.Thread(target=run, daemon=True, name="nuru-discussion-scenario").start()

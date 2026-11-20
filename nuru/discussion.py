@@ -58,6 +58,17 @@ class Transcript:
             n += 1
         return n
 
+    def robot_turns_since_human(self) -> int:
+        n = 0
+        for u in reversed(self.items):
+            if not getattr(u, "robot", False):
+                break
+            n += 1
+        return n
+
+    def unattributed_s(self) -> float:
+        return sum(u.duration for u in self.human() if not u.person)
+
     def last_lang(self, default="en") -> str:
         for u in reversed(self.human()):
             if u.text and u.lang in ("en", "sw"):
@@ -102,6 +113,8 @@ class FloorState:
     dwell_s: dict = field(default_factory=dict)       # person id -> seconds present
     heard_s: dict = field(default_factory=dict)       # person id -> seconds spoken
     last_invited: str | None = None
+    robot_turns_since_human: int = 0  # robot contributions nobody has answered yet
+    unattributed_s: float = 0.0       # speech we could not yet link to a face
 
 
 @dataclass
@@ -120,6 +133,7 @@ DEFAULT_RULES = {
     "quiet_share": 0.5,         # quiet = below this share of an equal split of speaking time
     "quiet_after_s": 25.0,      # only judge someone quiet after they've been present this long
     "duration_s": 300.0,        # discussion length
+    "max_unanswered": 3,        # robot contributions in a row with no reply -> close politely
 }
 
 
@@ -128,6 +142,8 @@ def quiet_person(s: FloorState, R: dict) -> str | None:
     if len(s.present) < 2:
         return None
     total = sum(s.heard_s.get(p, 0.0) for p in s.present)
+    if s.unattributed_s > total and total > 0:
+        return None                     # most speech is not linked to a face yet: we don't know who is quiet
     fair = total / len(s.present)
     cands = [p for p in s.present
              if s.dwell_s.get(p, 0) >= R["quiet_after_s"]
@@ -152,7 +168,10 @@ def plan_floor(s: FloorState, rules: dict | None = None) -> FloorDecision:
     if q and s.since_invite_s >= R["invite_gap_s"] and s.since_robot_s >= 4.0:
         return FloorDecision("invite", q, reason=f"{q} heard {s.heard_s.get(q, 0):.0f} s of "
                                                   f"{sum(s.heard_s.values()):.0f} s total")
-    if s.silence_s >= R["lull_s"] and s.since_robot_s >= R["lull_s"]:
+    if s.robot_turns_since_human >= R["max_unanswered"]:
+        return FloorDecision("close", reason=f"{s.robot_turns_since_human} contributions without a reply")
+    lull = R["lull_s"] * (1 + s.robot_turns_since_human)          # back off when nobody answers
+    if s.silence_s >= lull and s.since_robot_s >= lull:
         return FloorDecision("lull", reason=f"silence {s.silence_s:.0f} s - bring in a new angle")
     if s.human_turns_since_robot >= R["respond_every"] and s.since_robot_s >= R["min_robot_gap_s"]:
         return FloorDecision("respond", reason=f"{s.human_turns_since_robot} turns since the robot spoke")

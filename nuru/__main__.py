@@ -111,12 +111,23 @@ def cmd_live(args, cfg):
         if not robot.ping():
             print(f"Robot {cfg.host}:{cfg.port} not reachable - run  python -m nuru check  first.")
             return 1
+    if args.questions or (args.mock and args.scenario != "discussion"):
+        cfg.live["interaction"] = "questions"          # Lab 1 flow (scripted mock scenarios use it)
     sess = LiveSession(cfg, robot, speed=args.speed if args.mock else 1.0)
     if args.mock:
-        if args.scenario not in SCENARIOS:
-            sys.exit(f"Unknown scenario {args.scenario!r}; choose from {list(SCENARIOS)}")
         print(f"MOCK scenario '{args.scenario}' (camera and microphone are scripted)")
-        play_scenario(robot, args.scenario, args.speed, sess.stop_event)
+        if args.scenario == "discussion":
+            from .live import play_discussion
+            from .listener import MockListener
+            cfg.live["interaction"] = "discussion"
+            cfg.live.setdefault("discussion", {}).setdefault("rules", {})["duration_s"] = 150
+            listener = MockListener(lambda u: sess._utt_q.put(u), speed=args.speed)
+            sess.setup_discussion(listener)
+            play_discussion(sess, robot, listener, args.speed, sess.stop_event)
+        elif args.scenario not in SCENARIOS:
+            sys.exit(f"Unknown scenario {args.scenario!r}; choose from {list(SCENARIOS) + ['discussion']}")
+        else:
+            play_scenario(robot, args.scenario, args.speed, sess.stop_event)
     try:
         sess.run(max_interactions=args.max or (1 if args.mock else None))
     except KeyboardInterrupt:
@@ -490,7 +501,10 @@ def main(argv=None):
 
     robot_args(sub.add_parser("check"))
     sp = robot_args(sub.add_parser("live"))
-    sp.add_argument("--scenario", default="group", help="with --mock: solo | group | newcomer | far | failures")
+    sp.add_argument("--scenario", default="group",
+                    help="with --mock: discussion | solo | group | newcomer | far | failures")
+    sp.add_argument("--questions", action="store_true",
+                    help="use the Lab 1 question flow instead of the listening discussion")
     sp.add_argument("--speed", type=float, default=0.5, help="with --mock: <1 runs faster")
     sp.add_argument("--max", type=int, help="stop after this many interactions")
     sp = robot_args(sub.add_parser("panel"))
