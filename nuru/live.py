@@ -714,10 +714,17 @@ class LiveSession:
                     p = self.percept()
                     d = plan_engagement(p, self.mem, float(self.L.get("engage_distance_m", 1.6)))
                     if d.action == "idle":
+                        if d.reason != getattr(self, "_idle_reason", None):
+                            self._idle_reason = d.reason
+                            self._print("SENSE", f"idle: {d.reason}")
                         if p.n == 0 and self.mem.greeted:
                             self.mem = Memory()            # forget everyone once they are gone
                         self.act_idle()
                         self._sleep(2.0)
+                    else:
+                        self._idle_reason = None
+                    if d.action == "idle":
+                        pass
                     elif d.action == "watch":
                         self.robot.attend_location(p.get(d.target).location)
                         self._sleep(0.5)

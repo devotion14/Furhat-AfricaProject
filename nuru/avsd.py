@@ -336,6 +336,7 @@ def make_face_detector(max_faces):
             b = {c.category_name: float(c.score) for c in blends[i]} if i < len(blends) else None
             out.append(Face(lm, b))
         return out
+    detect.close = landmarker.close
     return detect
 
 
@@ -592,6 +593,11 @@ class AVSDRunner:
                         break
         finally:
             cap.release()
+            if hasattr(detect, "close"):
+                try:
+                    detect.close()          # release MediaPipe here, not at interpreter exit
+                except Exception:
+                    pass
             if self.show:
                 cv2.destroyAllWindows()
             self._release_audio()
@@ -671,11 +677,11 @@ class AVSDRunner:
                     self.run_blocking()
                     return                          # stopped on purpose
                 except Exception as e:
+                    if self._stop.is_set():
+                        return                              # shutting down (Ctrl+C): not a failure
                     log.exception("AVSD failed (attempt %d)", attempt + 1)
                     self._emit(None)
                     self._present_since = None
-                    if self._stop.is_set():
-                        return
                     if attempt < self.max_restarts:
                         self.warning = f"Speaker detection restarting after: {e}"
                         time.sleep(2.0)
@@ -691,6 +697,8 @@ class AVSDRunner:
 
     def stop(self):
         self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=2.0)      # let the video loop finish its frame and close MediaPipe
         self._release_audio()
 
     def _release_audio(self):
