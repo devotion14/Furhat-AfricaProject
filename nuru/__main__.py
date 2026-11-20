@@ -123,6 +123,8 @@ def cmd_live(args, cfg):
             cfg.live.setdefault("discussion", {}).setdefault("rules", {})["duration_s"] = 150
             listener = MockListener(lambda u: sess._utt_q.put(u), speed=args.speed)
             sess.setup_discussion(listener)
+            sess.appearance_override = [{"expression": "smiling", "colour": "blue", "clothing": "hoodie"},
+                                        {"expression": "serious", "colour": "white", "clothing": "school shirt"}]
             play_discussion(sess, robot, listener, args.speed, sess.stop_event)
         elif args.scenario not in SCENARIOS:
             sys.exit(f"Unknown scenario {args.scenario!r}; choose from {list(SCENARIOS) + ['discussion']}")

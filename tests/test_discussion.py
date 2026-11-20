@@ -104,3 +104,13 @@ def test_camera_seat_timeline():
     assert h.seat_during(1.0, 4.5) == "A"
     assert h.seat_during(3.5, 6.0) is None or h.seat_during(3.5, 6.0) == "B"
     assert h.seat_during(0.0, 0.5) is None
+
+
+def test_appearance_validation_and_line():
+    from nuru.appearance import clean, greeting_line
+    r = clean({"people": [{"expression": "Serious", "top_colour": "Blue", "clothing": "school uniform"},
+                          {"expression": "angry??", "top_colour": "red", "clothing": "t-shirt"}]}, 2)
+    assert r[0] == {"expression": "serious", "colour": "blue", "clothing": "school uniform"}
+    assert r[1]["expression"] == "calm"                                  # unknown -> neutral
+    assert clean({"people": [{"expression": "calm"}]}, 2) is None        # wrong number of people
+    assert greeting_line(r[0]).startswith("Hello to you in the blue school uniform.")

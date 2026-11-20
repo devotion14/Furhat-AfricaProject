@@ -178,5 +178,19 @@
     "model": "whisper-large-v3",
     "timeout_s": 8.0,
     "prompt": "Mazungumzo darasani kwa Kiingereza na Kiswahili. A classroom discussion in English and Kiswahili."
+  },
+  "appearance": {
+    "_comment": "Expression, clothing colour and type from one camera snapshot at the start (nuru/appearance.py). mention: 'greeting' = address each person once after the group greeting; 'never' = only log it. Snapshot is not stored.",
+    "enabled": true,
+    "mention": "greeting",
+    "wait_s": 2.0
+  },
+  "vision": {
+    "_comment": "Vision model for appearance. Groq model names change; check https://console.groq.com/docs/vision and update 'model' if calls fail.",
+    "provider": "groq",
+    "base_url": "https://api.groq.com/openai/v1",
+    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "timeout_s": 6.0,
+    "json_mode": true
   }
 }

@@ -452,6 +452,62 @@ class LiveSession:
         self._print("INFO", f"discussion model: {' -> '.join(models) if models else 'NONE (scripted lines only)'}")
         self.robot = _GatedRobot(self.robot, listener)
 
+    def look_at_people(self, p: Percept):
+        """Start describing expression and clothing in the background (live.json -> appearance)."""
+        self._appearance = {}
+        A = self.L.get("appearance", {})
+        if self.L.get("interaction") != "discussion" or not A.get("enabled", True):
+            return
+        if getattr(self, "appearance_override", None) is not None:      # mock rehearsal
+            self._appearance["people"] = self.appearance_override
+            return
+        try:
+            from .appearance import Appearance
+            ap = Appearance(self.cfg, self.L)
+        except Exception as e:
+            self._print("INFO", f"appearance: off ({e})")
+            return
+        if not ap.available:
+            self._print("INFO", "appearance: off (no vision key/model)")
+            return
+        n = p.n
+
+        def run():
+            t0 = time.time()
+            self._appearance["people"] = ap.describe(n)
+            self._appearance["error"] = ap.last_error
+            self._appearance["latency_s"] = round(time.time() - t0, 1)
+        self._appearance["thread"] = threading.Thread(target=run, daemon=True, name="nuru-vision")
+        self._appearance["thread"].start()
+
+    def greet_individually(self, p: Percept):
+        """After the group greeting: address each person once, tailored to what the
+        camera saw (expression -> tone, clothing -> how they are addressed)."""
+        from .appearance import greeting_line
+        A = self.L.get("appearance", {})
+        box = getattr(self, "_appearance", {})
+        th = box.get("thread")
+        if th is not None:
+            th.join(float(A.get("wait_s", 2.0)) * self.speed)
+        people = box.get("people")
+        if not people:
+            if box.get("error"):
+                self._print("SENSE", f"appearance not available: {box['error']}")
+            return
+        order = sorted(p.people, key=lambda x: x.location[0], reverse=bool(self.D.get("camera_flip", False)))
+        self.log.write("appearance", value={x.id: d for x, d in zip(order, people)},
+                       latency_s=box.get("latency_s"))
+        for x, d in zip(order, people):
+            self._print("SENSE", f"{x.id}: {d['expression']}, {d['colour']} {d['clothing']}".rstrip())
+        if A.get("mention", "greeting") != "greeting":
+            return
+        for x, d in zip(order, people):
+            self.look(x.location, f"{x.id} (personal hello)")
+            self.robot.gesture(CUSTOM_GESTURES["NuruWarmSmile"] if d["expression"] != "serious"
+                               else resolve_gesture("NuruSoftNod"))
+            self.say_line_text(greeting_line(d))
+        self.look(self.centre(p), "the group")
+
     def _scale(self, secs: float) -> float:
         """Real seconds -> scenario seconds (mock runs faster with speed < 1)."""
         return secs / self.speed if self.speed else secs
@@ -566,6 +622,7 @@ class LiveSession:
         self.linker.reset()
         self.transcript.items.clear()
 
+        self.greet_individually(p)
         # opening: the task intro and first question are scripted (reliable, no model latency)
         self.look(self.centre(p), "the group")
         self.say_line_text(task["intro"])
@@ -670,6 +727,7 @@ class LiveSession:
                     else:
                         self._decided(d)
                         self.mem = Memory()
+                        self.look_at_people(p)               # vision runs while the robot greets
                         self.interaction(p, d.mode)
                         if max_interactions and self.n_sessions >= max_interactions:
                             break
