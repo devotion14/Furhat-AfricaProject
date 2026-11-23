@@ -162,6 +162,10 @@ class LiveSession:
             self._print("SENSE", f"{p.n} present: {desc}" + ("" if p.camera_ok else "  (camera not answering)"))
             self.log.write("percept", value={"n": p.n, "people": ids, "arrived": p.arrived, "left": p.left,
                                              "camera_ok": p.camera_ok})
+        now = time.time()
+        if p.left:
+            self._left_t = getattr(self, "_left_t", [])
+            self._left_t += [now] * len(p.left)
         self.last = p
         return p
 
@@ -497,7 +501,9 @@ class LiveSession:
         order = sorted(p.people, key=lambda x: x.location[0], reverse=bool(self.D.get("camera_flip", False)))
         self.log.write("appearance", value={x.id: d for x, d in zip(order, people)},
                        latency_s=box.get("latency_s"))
+        self._seen = {}
         for x, d in zip(order, people):
+            self._seen[x.id] = f"{d['colour']} {d['clothing']}, looks {d['expression']}".strip()
             self._print("SENSE", f"{x.id}: {d['expression']}, {d['colour']} {d['clothing']}".rstrip())
         if A.get("mention", "greeting") != "greeting":
             return
@@ -561,7 +567,12 @@ class LiveSession:
             heard_s=dict(self.mem.heard_s),
             last_invited=self.mem.invited[-1] if self.mem.invited else None,
             robot_turns_since_human=self.transcript.robot_turns_since_human(),
-            unattributed_s=self._scale(self.transcript.unattributed_s()))
+            unattributed_s=self._scale(self.transcript.unattributed_s()),
+            last_is_question=self.transcript.last_is_question())
+
+    def _seen_text(self, p: Percept) -> dict:
+        seen = getattr(self, "_seen", {})
+        return {x.id: seen[x.id] for x in p.people if x.id in seen}
 
     def _names(self, p: Percept) -> dict:
         return {x.id: f"Person {i + 1}" for i, x in enumerate(p.people)}
@@ -572,7 +583,7 @@ class LiveSession:
         talking meanwhile, the contribution is dropped: the robot never interrupts."""
         box = {}
         th = threading.Thread(target=lambda: box.setdefault("c", brain.compose(
-            action, self.transcript, p.n, self._names(p))), daemon=True)
+            action, self.transcript, p.n, self._names(p), self._seen_text(p))), daemon=True)
         th.start()
         self.led("thinking")
         t0, filled = time.time(), False
@@ -609,9 +620,12 @@ class LiveSession:
     def discuss(self, p: Percept, mode: str):
         from .discussion import Brain, Contribution, plan_floor
         D = self.D
-        rules = dict(D.get("rules", {}))
-        if mode == "solo":
-            rules.update(D.get("solo_rules", {}))
+
+        def rules_for(n):
+            r = dict(D.get("rules", {}))
+            if n == 1:
+                r.update(D.get("solo_rules", {}))
+            return r
         task = self.cfg.tasks["tasks"][D.get("task", self.L.get("task", "T3"))]
         brain = Brain(self.chat, task, D.get("fallback_lines", {}), self.rng, float(D.get("model_deadline_s", 8.0)))
         group_prof = self.cfg.profile(self.L.get("group_profile", "c3"))
@@ -630,12 +644,36 @@ class LiveSession:
         t0 = last_robot = time.time()
         last_invite = 0.0
         last_reason = None
+        empty_since = None
+        cur_mode = mode
         while not self.stop_event.is_set():
             p = self.percept()
-            if p.n == 0:
-                self._decided(Decision("farewell", reason="everyone left"))
-                return
+            if p.n == 0:                                   # faces drop out briefly: wait before giving up
+                empty_since = empty_since or time.time()
+                if self._scale(time.time() - empty_since) >= float(D.get("absent_grace_s", 6.0)):
+                    self._decided(Decision("farewell", reason="everyone left"))
+                    return
+                self._drain_utterances(p)
+                self._sleep(0.25)
+                continue
+            empty_since = None
+            new_mode = plan_mode(p)
+            if new_mode != cur_mode:
+                self._print("PLAN", f"group size changed -> {cur_mode} -> {new_mode} rules")
+                self.log.write("decision", "", "switch_mode", frm=cur_mode, to=new_mode)
+                cur_mode = new_mode
+            rules = rules_for(p.n)
+            if self.bank is not None:
+                self.bank.max_voices = p.n + 1             # never more voices than people (+1 spare)
+            recent_left = [t for t in getattr(self, "_left_t", [])
+                           if self._scale(time.time() - t) < float(D.get("returning_s", 30.0))]
             for x in [x for x in p.people if x.id not in self.mem.greeted]:
+                if recent_left:                            # same person re-found by the tracker
+                    recent_left.pop()
+                    self._left_t.pop(0)
+                    self.mem.greeted.add(x.id)
+                    self.log.write("decision", x.id, "returning", reason="someone left recently: no new welcome")
+                    continue
                 self._decided(Decision("welcome", x.id, reason="arrived during the discussion"))
                 self.act_welcome(p, x.id)
                 last_robot = time.time()
@@ -646,7 +684,7 @@ class LiveSession:
                     self._scale(time.time() - self._pending_invite[1]) > float(D.get("response_window_s", 8.0)):
                 pid = self._pending_invite[0]
                 self._pending_invite = None
-                self._decided(Decision("release", pid, mode, reason="invitee did not answer"))
+                self._decided(Decision("release", pid, cur_mode, reason="invitee did not answer"))
                 self.log.write("no_response", pid)
                 self.act_release(p, "group", group_prof)
                 last_robot = time.time()
@@ -667,12 +705,12 @@ class LiveSession:
                 if self._pending_invite:
                     self._sleep(0.25)
                     continue
-                self._decided(Decision("invite", d.target, mode, d.reason))
+                self._decided(Decision("invite", d.target, cur_mode, d.reason))
                 self.act_invite(p, d.target, group_prof)
                 self._pending_invite = (d.target, time.time())
                 last_invite = last_robot = time.time()
                 continue
-            self._decided(Decision(d.action, mode=mode, reason=d.reason))
+            self._decided(Decision(d.action, mode=cur_mode, reason=d.reason))
             c = self.think(d.action, p, brain, allow_abort=d.action != "close")
             if c is None:
                 continue
@@ -680,7 +718,9 @@ class LiveSession:
                 self.log.write("model_fallback", "", d.action, error=brain.last_error)
             self.speak(c, p)
             last_robot = time.time()
-            if d.action == "close":
+            if d.action == "close" or c.kind == "closing":
+                if c.kind == "closing":
+                    self._print("PLAN", "participants want to stop -> close")
                 self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
                 self.say_line("closing_solo" if p.n == 1 else "closing_group")
                 return

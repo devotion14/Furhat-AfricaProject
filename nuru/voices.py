@@ -110,8 +110,11 @@ class VoiceBank:
         self.centroids.clear()
         self.counts.clear()
 
-    def identify(self, emb: np.ndarray | None) -> tuple[str | None, float]:
-        """-> (voice id, similarity). Unknown voice -> a new id. None embedding -> (None, 0)."""
+    def identify(self, emb: np.ndarray | None, allow_new: bool = True) -> tuple[str | None, float]:
+        """-> (voice id, similarity). None embedding -> (None, 0).
+        A new voice is only created when allow_new (long enough utterance) and the
+        bank is below max_voices; otherwise the nearest known voice is used.
+        Centroids only learn from confident matches, so they do not drift."""
         if emb is None:
             return None, 0.0
         best, sim = None, -1.0
@@ -119,11 +122,13 @@ class VoiceBank:
             s = float(np.dot(emb, c) / (np.linalg.norm(emb) * np.linalg.norm(c) + 1e-9))
             if s > sim:
                 best, sim = vid, s
-        if best is not None and (sim >= self.threshold or len(self.centroids) >= self.max_voices):
+        if best is not None and sim >= self.threshold:
             n = self.counts[best]
             self.centroids[best] = (self.centroids[best] * n + emb) / (n + 1)   # running mean
             self.counts[best] = n + 1
             return best, sim
+        if best is not None and (not allow_new or len(self.centroids) >= self.max_voices):
+            return best, sim                                                   # nearest, no learning
         vid = f"V{len(self.centroids) + 1}"
         self.centroids[vid], self.counts[vid] = np.asarray(emb, float), 1
         return vid, sim

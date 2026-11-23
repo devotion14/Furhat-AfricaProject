@@ -77,7 +77,9 @@ def clean(obj: dict | None, n_expected: int) -> list[dict] | None:
         out.append({"expression": expr if expr in EXPRESSIONS else "calm",
                     "colour": colour if colour.isascii() and len(colour) < 20 else "",
                     "clothing": clothing if clothing.isascii() and len(clothing) < 30 else ""})
-    return out if out and len(out) == n_expected else None
+    if not out or len(out) < n_expected:
+        return None
+    return out[:n_expected]          # background people beyond the group are ignored
 
 
 class Appearance:
@@ -87,7 +89,7 @@ class Appearance:
         self.client = ChatClient("vision", V.get("base_url", "https://api.groq.com/openai/v1"),
                                  V.get("model", ""), load_key(V.get("provider", "groq")),
                                  timeout_s=float(V.get("timeout_s", 6.0)), max_tokens=1500,
-                                 json_mode=bool(V.get("json_mode", True)))
+                                 json_mode=bool(V.get("json_mode", True)), extra=V.get("extra"))
         self.last_error = None
 
     @property

@@ -77,6 +77,10 @@ class Transcript:
                 out[u.lang] = out.get(u.lang, 0) + 1
         return out
 
+    def last_is_question(self) -> bool:
+        h = [u for u in self.human() if u.text]
+        return bool(h) and h[-1].text.rstrip().endswith("?") and h[-1] is self.items[-1]
+
     def last_lang(self, default="en") -> str:
         for u in reversed(self.human()):
             if u.text and u.lang in ("en", "sw"):
@@ -122,6 +126,7 @@ class FloorState:
     heard_s: dict = field(default_factory=dict)       # person id -> seconds spoken
     last_invited: str | None = None
     robot_turns_since_human: int = 0  # robot contributions nobody has answered yet
+    last_is_question: bool = False    # the last human turn asked something (often of the robot)
     unattributed_s: float = 0.0       # speech we could not yet link to a face
 
 
@@ -176,6 +181,8 @@ def plan_floor(s: FloorState, rules: dict | None = None) -> FloorDecision:
     if q and s.since_invite_s >= R["invite_gap_s"] and s.since_robot_s >= 4.0:
         return FloorDecision("invite", q, reason=f"{q} heard {s.heard_s.get(q, 0):.0f} s of "
                                                   f"{sum(s.heard_s.values()):.0f} s total")
+    if s.last_is_question and s.human_turns_since_robot >= 1 and s.since_robot_s >= 2.0:
+        return FloorDecision("respond", reason="someone asked a question - answer it")
     if s.robot_turns_since_human >= R["max_unanswered"]:
         return FloorDecision("close", reason=f"{s.robot_turns_since_human} contributions without a reply")
     lull = R["lull_s"] * (1 + s.robot_turns_since_human)          # back off when nobody answers
@@ -201,14 +208,21 @@ one answer as the only right one. Build on what people said; credit ideas ("that
 - Language: match the group. If they speak only English, answer in English; only Kiswahili, answer in \
 Kiswahili. If they have used BOTH languages, code-switch naturally like a Kenyan/Tanzanian student would: \
 at least one segment in Kiswahili and one in English. Use simple Kiswahili and simple English.
+- If someone asks YOU something (e.g. to repeat the question, what you think, what you can see), answer \
+that first, directly and briefly. To repeat the question, repeat the current discussion question.
 - If the discussion has drifted from the topic, gently connect it back.
+- Vary how you end: do NOT end every turn with a question, and never repeat the question you asked in your \
+previous turn.
+- If the participants clearly want to stop (e.g. "let's end here", "thank you, bye"), reply with kind \
+"closing": thank them in one sentence.
 - The transcript comes from automatic speech recognition and can contain errors; never quote \
 garbled words, and if something is unclear, do not guess wildly.
-- Never comment on anyone's appearance, never name or single out a person, never pressure anyone \
+- Do not comment on anyone's appearance unless they ask you about it; then answer from "What you can \
+see" below, kindly and briefly. Never name or single out a person, never pressure anyone \
 to speak, never mention that you are an AI model, never give personal data.
 
 Reply with JSON only:
-{"kind": "opinion" | "followup" | "summary" | "bridge" | "question",
+{"kind": "opinion" | "followup" | "summary" | "bridge" | "question" | "answer" | "closing",
  "segments": [{"lang": "en" | "sw", "text": "..."}]}
 Use one segment per language run, in speaking order (e.g. a Kiswahili phrase then English)."""
 
@@ -273,7 +287,8 @@ def validate(obj: dict | None, max_chars: int = 400, max_words: int = 45) -> Con
         budget -= len(t.split())
     out = short
     kind = str(obj.get("kind", "opinion"))
-    return Contribution(kind if kind in ("opinion", "followup", "summary", "bridge", "question") else "opinion",
+    return Contribution(kind if kind in ("opinion", "followup", "summary", "bridge", "question", "answer",
+                                         "closing") else "opinion",
                         out, "model")
 
 
@@ -295,20 +310,30 @@ class Brain:
             return qs[self._q_i - 1]
         return None
 
-    def messages(self, action: str, transcript: Transcript, n_people: int, names: dict) -> list:
+    def messages(self, action: str, transcript: Transcript, n_people: int, names: dict,
+                 seen: dict | None = None) -> list:
         qs = "\n".join(f"- {q}" for q in self.topic.get("questions", []))
         user = (f"Topic: {self.topic.get('title', '')}\n{self.topic.get('intro', '')}\n"
                 f"Discussion questions:\n{qs}\n\n"
-                f"People present: {n_people}\n\nRecent discussion:\n{transcript.render(names=names)}\n\n"
+                f"Current question: {self.current_question() or '(none yet)'}\n"
+                f"People present: {n_people}\n"
+                f"What you can see (only mention if asked): "
+                f"{'; '.join(f'{names.get(k, k)}: {v}' for k, v in (seen or {}).items()) or 'nothing'}\n\n"
+                f"Recent discussion:\n{transcript.render(names=names)}\n\n"
                 f"Languages used recently (turns): {transcript.language_mix() or 'none yet'}; "
                 f"last speaker used: {transcript.last_lang()}\n\n"
                 f"Your task now: {ACTION_BRIEF[action]}")
         return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
-    def compose(self, action: str, transcript: Transcript, n_people: int, names: dict | None = None) -> Contribution:
+    def current_question(self) -> str | None:
+        qs = self.topic.get("questions", [])
+        return qs[self._q_i - 1] if 0 < self._q_i <= len(qs) else None
+
+    def compose(self, action: str, transcript: Transcript, n_people: int, names: dict | None = None,
+                seen: dict | None = None) -> Contribution:
         """Always returns something sayable (model output or a scripted fallback)."""
         if self.chat is not None and self.chat.available:
-            reply = self.chat.chat(self.messages(action, transcript, n_people, names or {}),
+            reply = self.chat.chat(self.messages(action, transcript, n_people, names or {}, seen),
                                    deadline_s=self.deadline_s)
             c = validate(extract_json(reply), max_words=60 if action == "close" else 45)
             if c:

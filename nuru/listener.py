@@ -61,6 +61,7 @@ class Listener:
         self.vad = MultiChannelVAD(["mic"], frame_s=FRAME / SR, threshold_db=threshold_db, hangover_s=end_gap_s)
         self.robot_vad = MultiChannelVAD(["robot"], frame_s=FRAME / SR, threshold_db=10.0, hangover_s=robot_tail_s)
         self.min_s, self.max_s, self.robot_tail_s, self.end_gap_s = min_s, max_s, robot_tail_s, end_gap_s
+        self.new_voice_min_s = 2.0      # shorter clips are too short to recognise a NEW speaker
         self._pre = collections.deque(maxlen=10)          # 300 ms pre-roll
         self._buf: list[np.ndarray] = []
         self._t_start = None
@@ -117,7 +118,8 @@ class Listener:
     def _process(self, u: Utterance):
         try:
             if self.embedder is not None and self.bank is not None:
-                u.voice, _ = self.bank.identify(self.embedder(u.audio))
+                long_enough = u.duration - self.end_gap_s >= self.new_voice_min_s
+                u.voice, _ = self.bank.identify(self.embedder(u.audio), allow_new=long_enough)
             if self.transcriber is not None:
                 r = self.transcriber.transcribe(u.audio)
                 if r:

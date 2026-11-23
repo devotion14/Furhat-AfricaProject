@@ -286,6 +286,7 @@ def test_plan_failure_handling():
 @pytest.mark.parametrize("scenario,expect", [("solo", "Hello, I am Nuru"), ("group", "Hakuna shida.")])
 def test_live_session_runs_without_operator(tmp_path, scenario, expect):
     cfg = _cfg(); cfg.log_dir = tmp_path
+    cfg.live["interaction"] = "questions"      # the Lab 1 flow; never touch real audio/camera feeds in tests
     robot = MockRobot(speed=0.02, quiet=True)
     sess = LiveSession(cfg, robot, verbose=False, speed=0.02,
                        sense=PeopleTracker(robot, poll_s=0.05, confirm_s=0.1, lost_after_s=0.5))

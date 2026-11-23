@@ -46,7 +46,9 @@ class ChatClient:
     """OpenAI-compatible /chat/completions client."""
 
     def __init__(self, name: str, base_url: str, model: str, key: str | None,
-                 timeout_s: float = 8.0, json_mode: bool = False, max_tokens: int = 300):
+                 timeout_s: float = 8.0, json_mode: bool = False, max_tokens: int = 300,
+                 extra: dict | None = None):
+        self.extra = extra or {}              # provider-specific body fields, e.g. MiniMax thinking off
         self.name, self.base_url, self.model, self.key = name, base_url.rstrip("/"), model, key
         self.timeout_s, self.json_mode, self.max_tokens = timeout_s, json_mode, max_tokens
         self.last_latency_s = None
@@ -64,6 +66,7 @@ class ChatClient:
                 "max_tokens": self.max_tokens}
         if self.json_mode:
             body["response_format"] = {"type": "json_object"}
+        body.update(self.extra)
         t0 = time.time()
         try:
             r = requests.post(f"{self.base_url}/chat/completions", json=body, timeout=timeout_s or self.timeout_s,
@@ -175,12 +178,25 @@ def make_chat(L: dict) -> FallbackChat:
         clients.append(ChatClient(name, p.get("base_url", ""), p.get("model", ""), load_key(name),
                                   timeout_s=float(p.get("timeout_s", 8.0)),
                                   json_mode=bool(p.get("json_mode", False)),
-                                  max_tokens=int(p.get("max_tokens", 300))))
+                                  max_tokens=int(p.get("max_tokens", 300)), extra=p.get("extra")))
     return FallbackChat(clients, cfg.get("strategy", "race"), float(cfg.get("prefer_wait_s", 3.0)))
 
 
 # ----------------------------------------------------------------- speech
-WHISPER_LANG = {"english": "en", "swahili": "sw", "en": "en", "sw": "sw"}
+def norm_lang(lang: str) -> str:
+    """Whisper names: 'english', 'swahili', 'swahili (macrolanguage)', 'en', ..."""
+    lang = (lang or "").lower()
+    if lang.startswith("swahili") or lang == "sw":
+        return "sw"
+    if lang.startswith("english") or lang == "en":
+        return "en"
+    return lang
+
+
+# Whisper's classic inventions on noise / silence (subtitle credits, polite endings).
+HALLUCINATIONS = {"thank you", "thank you.", "thanks for watching", "thanks for watching!", "you", "bye",
+                  "bye.", "asante", "ご視聴ありがとうございました", "ご視聴ありがとうございました。",
+                  "subtitles by the amara.org community", "a classroom discussion in english and kiswahili."}
 
 
 def to_wav(audio: np.ndarray, sr: int = 16000) -> bytes:
@@ -203,8 +219,22 @@ def speech_text(j: dict, no_speech_max: float = 0.6) -> str:
                         if float(sg.get("no_speech_prob", 0.0)) <= no_speech_max)
     else:
         text = str(j.get("text") or "")
+    text = re.sub(r"<\|[^|>]*\|>", "", text)          # stray Whisper tokens like <|de|>
     text = " ".join(text.split())
     return text if any(ch.isalpha() for ch in text) else ""
+
+
+def plausible(text: str, lang: str, duration_s: float) -> bool:
+    """Reject transcripts that are almost certainly not what was said:
+    a language other than English/Kiswahili (Whisper drifting to Japanese,
+    Russian, Tagalog...), or a known hallucination on a short clip."""
+    if not text:
+        return False
+    if lang not in ("en", "sw"):
+        return False
+    if duration_s < 3.0 and text.lower().strip(" .!") in {h.strip(" .!") for h in HALLUCINATIONS}:
+        return False
+    return True
 
 
 class Transcriber:
@@ -242,7 +272,11 @@ class Transcriber:
                 return None
             j = r.json()
             lang = str(j.get("language", "")).lower()
-            return {"text": speech_text(j, self.no_speech_max), "lang": WHISPER_LANG.get(lang, lang or "en")}
+            lang = norm_lang(lang) or "en"
+            text = speech_text(j, self.no_speech_max)
+            if not plausible(text, lang, len(audio) / sr):
+                return {"text": "", "lang": lang, "rejected": text}
+            return {"text": text, "lang": lang}
         except (requests.RequestException, ValueError) as e:
             self.last_error = str(e)
             log.warning("transcription failed: %s", e)

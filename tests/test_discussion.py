@@ -149,3 +149,25 @@ def test_race_prefers_first_model_but_does_not_wait_forever():
     assert fc.chat([], deadline_s=2) == "B" and _t.time() - t0 < 0.6
     fc = FallbackChat([Fake("minimax", 0.05, None), Fake("groq", 0.05, None)], prefer_wait_s=0.3)
     assert fc.chat([], deadline_s=1) is None
+
+
+def test_transcript_filters_and_direct_questions():
+    from nuru.llm import norm_lang, plausible
+    assert norm_lang("swahili (macrolanguage)") == "sw" and norm_lang("English") == "en"
+    assert not plausible("ご視聴ありがとうございました。", "japanese", 3.4)
+    assert not plausible("Thank you.", "en", 1.4)
+    assert plausible("Thank you for giving us the options, I think we can end here.", "en", 6.2)
+    assert not plausible("A classroom discussion in English and Kiswahili.", "en", 2.0)
+    s = state(last_is_question=True, human_turns_since_robot=1, since_robot_s=3)
+    assert plan_floor(s).action == "respond"
+    assert plan_floor(state(last_is_question=True, human_turns_since_robot=1, someone_speaking=True)).action == "wait"
+
+
+def test_short_clips_do_not_create_new_voices():
+    b = VoiceBank(threshold=0.95)
+    a, c = np.array([1.0, 0, 0]), np.array([0, 1.0, 0])
+    assert b.identify(a)[0] == "V1"
+    assert b.identify(c, allow_new=False)[0] == "V1"          # too short to be a new person
+    assert b.identify(c, allow_new=True)[0] == "V2"
+    b.max_voices = 2
+    assert b.identify(np.array([0, 0, 1.0]))[0] in ("V1", "V2")
