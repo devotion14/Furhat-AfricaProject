@@ -75,20 +75,26 @@ All good - ready for a session.
 
 The robot runs a whole small-group discussion by itself, in English and Kiswahili:
 
-1. **Notices people approaching** (Furhat face tracker), beckons from a distance, and greets the group.
-2. **Looks at each person**: one camera snapshot goes to a vision model, which gives expression, clothing
-   colour and clothing type. The robot then greets each person once ("Hello to you in the blue hoodie…"),
-   with a reassuring line for anyone who looks serious or nervous.
-3. **Listens without interrupting**: it transcribes everything said (Groq Whisper, English, Kiswahili or
-   mixed). It tells **voices apart** (voiceprints) and links each voice to a face. To do that it uses the
-   camera (whose mouth is moving), who answered an invitation, and who is left without a voice.
-4. **Takes part**: fixed rules decide *when* it may speak (only after a pause, never over someone).
-   MiniMax (with Groq as backup) decides *what* to say: balanced opinions, follow-ups and summaries, in the
-   language the group is using.
-5. **Invites quiet people** with the C3 cues from the paper (group glance, pair, short gaze with a soft nod,
-   "Je, una maoni? What do you think?", gentle release that never insists).
-6. **Never stalls**: if the model is slow, the robot shows it is thinking. If it fails, the robot uses
-   scripted lines. If nobody answers, it backs off, and it closes politely after three unanswered turns.
+1. **Notices people approaching** (Furhat face tracker), beckons from a distance and greets the group,
+   with short natural pauses between steps.
+2. **Greets each person**: expression and clothing (colour and type) from the camera ("Hello to you in
+   the blue hoodie…"). Clothing type comes from MiniMax vision; if that is slow, expression and colour come
+   from the laptop's own camera analysis.
+3. **Listens without interrupting**: it transcribes speech (Groq Whisper, English and Kiswahili) and
+   tells **voices apart**. Each voice is linked to a face by mouth movement, by who answered an
+   invitation, or by elimination.
+4. **Recognises people who come back** within the session (face signatures, kept in memory only):
+   "Karibu tena!". It **counts people as they come and go** and says the number when it changes.
+5. **Takes part**: fixed rules decide *when* it may speak (only after a pause). Groq (with MiniMax as
+   backup) decides *what* to say: balanced views that stay on what the group is discussing. Each turn is
+   in **one language**, the one used by the person it is answering.
+6. **Understands requests** in English and Kiswahili: repeat the question, previous question, "I didn't
+   hear you", next question, let's end.
+7. **Body language**: it looks at whoever is talking and nods now and then. After 30 s it glances at the
+   quiet person. It invites quiet people with the C3 cues from the paper (bilingual and never insisting).
+   **LED**: green when someone is talking, pink when the robot talks, blue when it is thinking.
+8. **Never stalls**: timeouts, fallbacks and scripted lines throughout. It backs off when nobody answers
+   and closes politely.
 
 ```powershell
 # once: API keys (never committed)
