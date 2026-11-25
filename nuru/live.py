@@ -746,6 +746,51 @@ class LiveSession:
                 u.person = new
         self.log.write("reidentified", new, old)
 
+    # -- gaze while listening ----------------------------------------------------
+    def current_speaker(self, p: Percept) -> str | None:
+        """Who is talking right now: the camera's mouth movement if available,
+        otherwise the last person we heard."""
+        cam = getattr(self, "cam", None)
+        if cam is not None and cam.available:
+            pid = cam.person_for(getattr(cam.det, "_last", None), p.people)
+            if pid:
+                return pid
+        last = [u for u in self.transcript.human() if u.person]
+        return last[-1].person if last else None
+
+    def gaze_update(self, p: Percept):
+        """Look at whoever is talking and nod now and then (backchannel). After
+        gaze_cooldown_s on the active speakers, glance briefly at the quietest
+        person (inclusive gaze, no words), then go back. Quiet room -> the group."""
+        D, g, now = self.D, self._gaze, time.time()
+        dt = self._scale(now - g["t"])
+        g["t"] = now
+        if now < g["glance_until"]:
+            return
+        if self.listener.someone_speaking:
+            who = self.current_speaker(p)
+            x = p.get(who) if who else None
+            if x and g["target"] != who:
+                self.look(x.location, f"{who} (speaking)")
+                g["target"] = who
+            g["on_speakers_s"] += dt
+            if self._scale(now - g["last_nod"]) >= g["next_nod_s"]:
+                self.robot.gesture(resolve_gesture("NuruSoftNod"), blocking=False)
+                g["last_nod"], g["next_nod_s"] = now, self.rng.uniform(*D.get("nod_every_s", (5.0, 8.0)))
+        elif self._scale(self.listener.silence_s()) >= 3.0 and g["target"] != "group":
+            self.look(self.centre(p))
+            g["target"] = "group"
+        if p.n >= 2 and g["on_speakers_s"] >= float(D.get("gaze_cooldown_s", 30.0)):
+            heard = self.mem.heard_s
+            quiet = min((x for x in p.people if x.id != g["target"]),
+                        key=lambda x: heard.get(x.id, 0.0), default=None)
+            if quiet:
+                self.look(quiet.location, f"{quiet.id} (short glance at the quiet person)")
+                self.log.write("gaze", quiet.id, "glance_quiet", after_s=round(g["on_speakers_s"]))
+                g["glance_until"] = now + float(D.get("glance_s", 1.5)) * self.speed
+                g["target"] = None                         # look back at the speaker afterwards
+            g["on_speakers_s"] = 0.0
+
     INTENT_LINES = {
         "repeat_question": {"en": "The question is:", "sw": "Swali ni:"},
         "previous_question": {"en": "The previous question was:", "sw": "Swali lililopita lilikuwa:"},
@@ -826,6 +871,8 @@ class LiveSession:
         self._intent = None
         self.person_lang = {}
         self._face_result, face_asked = {}, {}
+        self._gaze = {"t": time.time(), "target": None, "on_speakers_s": 0.0, "last_nod": time.time(),
+                      "next_nod_s": 6.0, "glance_until": 0.0}
         self.check_faces(p, [])                         # remember everyone who is here at the start
         announced_n, count_changed = p.n, None
         while not self.stop_event.is_set():
@@ -927,6 +974,7 @@ class LiveSession:
                 if d.reason != last_reason and "speaking" not in d.reason:
                     self.log.write("floor", "", "wait", reason=d.reason)
                 last_reason = d.reason
+                self.gaze_update(p)
                 self._sleep(0.25)
                 continue
             last_reason = None

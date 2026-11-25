@@ -75,7 +75,16 @@
     "absent_grace_s": 6.0,
     "returning_s": 30.0,
     "intent_gap_s": 0.8,
-    "count_stable_s": 3.0
+    "count_stable_s": 3.0,
+    "_gaze_comment": "While listening: look at the speaker, nod every nod_every_s; after gaze_cooldown_s on the speakers glance at the quietest person for glance_s.",
+    "gaze_cooldown_s": 30.0,
+    "glance_s": 1.5,
+    "nod_every_s": [
+      5.0,
+      8.0
+    ],
+    "face_memory": true,
+    "face_wait_s": 2.5
   },
   "solo": {
     "gaze_hold_s": 3.0,
