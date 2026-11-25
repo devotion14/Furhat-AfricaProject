@@ -12,3 +12,4 @@ logs/
 config/face_landmarker.task
 __pycache__/
 config/keys.json
+config/*.onnx

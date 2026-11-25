@@ -190,3 +190,17 @@ def test_one_language_per_turn():
     segs = [("sw", "Ni wazo zuri."), ("en", "It is a good idea.")]
     assert one_language(segs, "sw") == [("sw", "Ni wazo zuri.")]
     assert one_language([("en", "Only English.")], "sw") == [("en", "Only English.")]
+
+
+def test_face_memory_recognises_returning_people():
+    from nuru.faces import FaceMemory
+    m = FaceMemory(threshold=0.9)
+    a, b = np.array([1.0, 0.1, 0]), np.array([0, 1.0, 0.1])
+    assert m.assign("user-0", a, ["user-1"]) == ("new", None)
+    assert m.assign("user-1", b, ["user-0"]) == ("new", None)
+    assert m.assign("user-0", a, ["user-1"])[0] == "known"
+    # user-0 leaves; comes back as user-5
+    assert m.assign("user-5", a * 1.02, ["user-1"]) == ("returning", "user-0")
+    # a stranger is new, and someone present cannot be matched
+    assert m.assign("user-6", np.array([0, 0, 1.0]), ["user-5", "user-1"]) == ("new", None)
+    assert m.assign("user-7", b, ["user-1"]) == ("new", None)

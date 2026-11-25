@@ -166,6 +166,8 @@ class LiveSession:
         if p.left:
             self._left_t = getattr(self, "_left_t", [])
             self._left_t += [now] * len(p.left)
+            self._left_at = getattr(self, "_left_at", {})
+            self._left_at.update({pid: now for pid in p.left})
         self.last = p
         return p
 
@@ -479,6 +481,14 @@ class LiveSession:
                 self._print("INFO", "camera speaker hint: on (mouth movement links voices to faces)")
             except Exception as e:                  # mediapipe/opencv/zmq missing: voiceprints only
                 self._print("INFO", f"camera speaker hint: off ({e})")
+        self.faces = self.face_mem = None
+        if D.get("face_memory", True) and not getattr(listener, "scripted", False):
+            try:
+                from .faces import FaceMemory, FaceSigner
+                self.faces, self.face_mem = FaceSigner(), FaceMemory()
+                self._print("INFO", "face memory: on (recognises people who come back; in memory only)")
+            except Exception as e:
+                self._print("INFO", f"face memory: off ({e})")
         models = [c.name for c in self.chat.clients]
         self._print("INFO", f"discussion model: {' -> '.join(models) if models else 'NONE (scripted lines only)'}")
         self.robot = _GatedRobot(self.robot, listener)
@@ -686,6 +696,56 @@ class LiveSession:
         self._last_said = list(c.segments)
         self._last_kind = c.kind
 
+    # -- who is who: face memory ----------------------------------------------
+    def check_faces(self, p: Percept, pids: list):
+        """Background: face signatures for the people now present; results for `pids`
+        land in self._face_result[pid] = ("new" | "returning" | "known" | "unknown", old id)."""
+        if self.faces is None:
+            for pid in pids:
+                self._face_result[pid] = ("unknown", None)
+            return
+        people = sorted(p.people, key=lambda x: x.location[0], reverse=bool(self.D.get("camera_flip", False)))
+        present = [x.id for x in people]
+
+        def run():
+            res = {}
+            try:
+                from .avsd import FurhatCamera
+                cam = FurhatCamera(self.cfg.host, timeout_s=3.0)
+                try:
+                    ok, frame = cam.read()
+                finally:
+                    cam.release()
+                sigs = self.faces.signatures(frame) if ok else []
+                if len(sigs) == len(people):
+                    for x, (_, feat) in zip(people, sigs):
+                        status, old = self.face_mem.assign(x.id, feat, [q for q in present if q != x.id])
+                        res[x.id] = (status, old)
+                else:
+                    log.info("face check: %d faces in frame, %d people tracked", len(sigs), len(people))
+            except Exception as e:
+                log.warning("face check failed: %s", e)
+            for pid in pids:
+                self._face_result[pid] = res.get(pid, ("unknown", None))
+        threading.Thread(target=run, daemon=True, name="nuru-faces").start()
+
+    def transfer_person(self, old: str, new: str):
+        """The tracker gave a returning person a new id: move everything we know."""
+        m = self.mem
+        m.heard_s[new] = m.heard_s.pop(old, 0.0) + m.heard_s.get(new, 0.0)
+        m.greeted.add(new)
+        m.invited = [new if x == old else x for x in m.invited]
+        for d in (self.person_lang, getattr(self, "_seen", {})):
+            if old in d:
+                d[new] = d.pop(old)
+        for v, who in list(self.linker.voice_to_person.items()):
+            if who == old:
+                self.linker.voice_to_person[v] = new
+        for u in self.transcript.human():
+            if u.person == old:
+                u.person = new
+        self.log.write("reidentified", new, old)
+
     INTENT_LINES = {
         "repeat_question": {"en": "The question is:", "sw": "Swali ni:"},
         "previous_question": {"en": "The previous question was:", "sw": "Swali lililopita lilikuwa:"},
@@ -765,6 +825,8 @@ class LiveSession:
         cur_mode = mode
         self._intent = None
         self.person_lang = {}
+        self._face_result, face_asked = {}, {}
+        self.check_faces(p, [])                         # remember everyone who is here at the start
         announced_n, count_changed = p.n, None
         while not self.stop_event.is_set():
             p = self.percept()
@@ -787,8 +849,29 @@ class LiveSession:
                 self.bank.max_voices = p.n + 1             # never more voices than people (+1 spare)
             recent_left = [t for t in getattr(self, "_left_t", [])
                            if self._scale(time.time() - t) < float(D.get("returning_s", 30.0))]
-            for x in [x for x in p.people if x.id not in self.mem.greeted]:
-                if recent_left:                            # same person re-found by the tracker
+            new_people = [x for x in p.people if x.id not in self.mem.greeted]
+            ask = [x.id for x in new_people if x.id not in face_asked]
+            if ask:
+                for pid in ask:
+                    face_asked[pid] = time.time()
+                self.check_faces(p, ask)
+            for x in new_people:
+                result = self._face_result.get(x.id)
+                if result is None and self._scale(time.time() - face_asked[x.id]) < float(D.get("face_wait_s", 2.5)):
+                    continue                               # face check still running
+                status, old = result or ("unknown", None)
+                if status == "returning" and old:
+                    gone_s = self._scale(time.time() - getattr(self, "_left_at", {}).get(old, 0.0))
+                    self.transfer_person(old, x.id)
+                    if gone_s < float(D.get("returning_s", 30.0)):
+                        self._print("SENSE", f"{x.id} is {old} again (tracker lost them {gone_s:.0f} s)")
+                        continue
+                    lang = self.person_lang.get(x.id, self.group_lang())
+                    self._decided(Decision("welcome_back", x.id, reason=f"face matches {old}, away {gone_s:.0f} s"))
+                    self.act_welcome(p, x.id, (lang,), key="welcome_back")
+                    last_robot = time.time()
+                    continue
+                if status == "unknown" and recent_left:    # no face check: same person re-found by the tracker?
                     recent_left.pop()
                     self._left_t.pop(0)
                     self.mem.greeted.add(x.id)
