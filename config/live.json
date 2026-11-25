@@ -157,12 +157,12 @@
   "llm": {
     "_comment": "Chat models, tried in this order. Both use the OpenAI-compatible API. Tested 20 Nov 2026: MiniMax-M3 ~2 s, Groq openai/gpt-oss-120b ~1 s. List models: GET <base_url>/models. MiniMax China accounts use https://api.minimaxi.com/v1.",
     "order": [
-      "minimax",
-      "groq"
+      "groq",
+      "minimax"
     ],
     "strategy": "race",
     "prefer_wait_s": 3.0,
-    "_strategy_comment": "race: ask both models at once, use MiniMax if it answers within prefer_wait_s, otherwise Groq. sequential: one after the other.",
+    "_strategy_comment": "race: ask both models at once, use the first in 'order' (Groq) if it answers within prefer_wait_s, otherwise whichever answers. Groq is first because MiniMax timed out often in the 23 Nov robot test.",
     "minimax": {
       "base_url": "https://api.minimax.io/v1",
       "model": "MiniMax-M3",
@@ -209,5 +209,35 @@
         "type": "disabled"
       }
     }
+  },
+  "led_discussion": {
+    "_comment": "Discussion mode LED (RGB 0-255). Changes automatically with the state.",
+    "human_talking": [
+      0,
+      90,
+      0
+    ],
+    "robot_talking": [
+      120,
+      20,
+      70
+    ],
+    "thinking": [
+      0,
+      30,
+      120
+    ],
+    "idle": [
+      12,
+      12,
+      12
+    ]
+  },
+  "pauses": {
+    "_comment": "Random pause range (seconds) between opening steps.",
+    "between_steps": [
+      0.6,
+      1.2
+    ]
   }
 }

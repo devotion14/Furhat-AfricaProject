@@ -174,9 +174,35 @@ class LiveSession:
         self.log.write("decision", d.target or "", d.action, mode=d.mode, reason=d.reason)
 
     def led(self, state):
+        if getattr(self, "_led_auto", False):     # discussion mode: the LED loop owns the LED
+            return
         rgb = (self.L.get("led") or {}).get(state)
         if rgb:
             self.robot.led(*rgb)
+
+    def _led_loop(self):
+        """Discussion mode LED: pink = robot talking, blue = thinking, green = someone
+        talking, dim white = idle. Only sends a command when the state changes."""
+        colours = self.L.get("led_discussion", {})
+        last = None
+        while not self.stop_event.is_set():
+            if getattr(self.robot, "speaking", False):
+                state = "robot_talking"
+            elif getattr(self, "_thinking", False):
+                state = "thinking"
+            elif self.listener.someone_speaking:
+                state = "human_talking"
+            else:
+                state = "idle"
+            if state != last and colours.get(state):
+                self.robot.led(*colours[state])
+                last = state
+            self.stop_event.wait(0.1)
+
+    def _pause(self, key="between_steps"):
+        """A short, slightly random pause so the robot does not rattle off lines."""
+        lo, hi = (self.L.get("pauses") or {}).get(key, (0.6, 1.2))
+        self._sleep(self.rng.uniform(lo, hi))
 
     def say_line(self, key, langs=("sw", "en")):
         line = (self.L.get("lines") or {}).get(key, {})
@@ -239,6 +265,7 @@ class LiveSession:
             self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
             self.say_line("greet_group")
         self.mem.greeted.update(x.id for x in p.people)
+        self._pause()
 
     def act_welcome(self, p: Percept, pid: str):
         x = p.get(pid)
@@ -455,6 +482,8 @@ class LiveSession:
         models = [c.name for c in self.chat.clients]
         self._print("INFO", f"discussion model: {' -> '.join(models) if models else 'NONE (scripted lines only)'}")
         self.robot = _GatedRobot(self.robot, listener)
+        self._led_auto = True
+        threading.Thread(target=self._led_loop, daemon=True, name="nuru-led").start()
 
     def look_at_people(self, p: Percept):
         """Start describing expression and clothing in the background (live.json -> appearance)."""
@@ -512,6 +541,7 @@ class LiveSession:
             self.robot.gesture(CUSTOM_GESTURES["NuruWarmSmile"] if d["expression"] != "serious"
                                else resolve_gesture("NuruSoftNod"))
             self.say_line_text(greeting_line(d))
+            self._pause()
         self.look(self.centre(p), "the group")
 
     def _scale(self, secs: float) -> float:
@@ -586,12 +616,14 @@ class LiveSession:
             action, self.transcript, p.n, self._names(p), self._seen_text(p))), daemon=True)
         th.start()
         self.led("thinking")
+        self._thinking = True
         t0, filled = time.time(), False
         while th.is_alive():
             if allow_abort and self.listener.someone_speaking:
                 self._print("PLAN", "someone started talking while the robot was thinking -> drop it, keep listening")
                 self.log.write("decision", "", "yield", reason="speech during thinking")
                 self.led("idle")
+                self._thinking = False
                 return None
             if not filled and self._scale(time.time() - t0) > float(self.D.get("filler_after_s", 1.5)):
                 filled = True
@@ -600,6 +632,7 @@ class LiveSession:
                 self.robot.gesture(resolve_gesture("NuruSoftNod"), blocking=False)
             th.join(0.1)
         self.led("idle")
+        self._thinking = False
         return box.get("c")
 
     def speak(self, c, p: Percept, to_group: bool = True):
@@ -640,6 +673,7 @@ class LiveSession:
         # opening: the task intro and first question are scripted (reliable, no model latency)
         self.look(self.centre(p), "the group")
         self.say_line_text(task["intro"])
+        self._pause()
         self.speak(Contribution("question", [("en", brain.next_question() or task["intro"])], "script"), p)
         t0 = last_robot = time.time()
         last_invite = 0.0
@@ -803,12 +837,15 @@ class _GatedRobot:
 
     def __init__(self, robot, listener):
         self._robot, self._listener = robot, listener
+        self.speaking = False
 
     def say(self, text, lang="en", blocking=True):
         self._listener.set_robot_speaking(True)
+        self.speaking = True
         try:
             return self._robot.say(text, lang=lang, blocking=blocking)
         finally:
+            self.speaking = False
             self._listener.set_robot_speaking(False)
 
     def __getattr__(self, name):
