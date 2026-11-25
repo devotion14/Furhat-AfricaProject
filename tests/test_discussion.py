@@ -171,3 +171,22 @@ def test_short_clips_do_not_create_new_voices():
     assert b.identify(c, allow_new=True)[0] == "V2"
     b.max_voices = 2
     assert b.identify(np.array([0, 0, 1.0]))[0] in ("V1", "V2")
+
+
+def test_intents_english_and_kiswahili():
+    from nuru.discussion import detect_intent
+    cases = {"Can you repeat the question?": "repeat_question", "Rudia swali tafadhali": "repeat_question",
+             "What was the previous question?": "previous_question", "Swali lililopita lilikuwa gani?": "previous_question",
+             "Sorry, I didn't hear you": "repeat_last", "Sikusikia vizuri": "repeat_last",
+             "Next question please": "next_question", "Tuendelee na swali lingine": "next_question",
+             "I think we can end the conversation here.": "end", "Haya, kwaheri!": "end",
+             "We should go to Nairobi this weekend.": None, "I like the museum.": None}
+    for text, want in cases.items():
+        assert detect_intent(text) == want, text
+
+
+def test_one_language_per_turn():
+    from nuru.discussion import one_language
+    segs = [("sw", "Ni wazo zuri."), ("en", "It is a good idea.")]
+    assert one_language(segs, "sw") == [("sw", "Ni wazo zuri.")]
+    assert one_language([("en", "Only English.")], "sw") == [("en", "Only English.")]

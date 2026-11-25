@@ -267,11 +267,11 @@ class LiveSession:
         self.mem.greeted.update(x.id for x in p.people)
         self._pause()
 
-    def act_welcome(self, p: Percept, pid: str):
+    def act_welcome(self, p: Percept, pid: str, langs=("sw", "en"), key: str = "welcome"):
         x = p.get(pid)
         self.look(x.location, f"newcomer {pid}")
         self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"], blocking=True)
-        self.say_line("welcome")
+        self.say_line(key, langs)
         self.mem.greeted.add(pid)
         if p.n > 1:
             self.look(self.centre(p), "the group")
@@ -573,6 +573,14 @@ class LiveSession:
                            voice=u.voice, lang=u.lang, duration_s=round(self._scale(u.duration), 2), how=u.how)
             if u.person:
                 self.mem.heard_s[u.person] = self.mem.heard_s.get(u.person, 0.0) + self._scale(u.duration)
+                if u.text and u.lang in ("en", "sw"):
+                    self.person_lang[u.person] = u.lang
+            from .discussion import detect_intent
+            intent = detect_intent(u.text)
+            if intent:
+                self._intent = (intent, u.person, u.lang if u.lang in ("en", "sw") else self.group_lang())
+                self._print("PLAN", f"request understood: {intent} (from {u.person or 'someone'})")
+                self.log.write("intent", u.person or "", intent)
             if invited and u.person == invited:
                 self._pending_invite = None
                 x = p.get(invited)
@@ -613,7 +621,8 @@ class LiveSession:
         talking meanwhile, the contribution is dropped: the robot never interrupts."""
         box = {}
         th = threading.Thread(target=lambda: box.setdefault("c", brain.compose(
-            action, self.transcript, p.n, self._names(p), self._seen_text(p))), daemon=True)
+            action, self.transcript, p.n, self._names(p), self._seen_text(p),
+            self.transcript.last_lang() if action == "respond" else self.group_lang())), daemon=True)
         th.start()
         self.led("thinking")
         self._thinking = True
@@ -635,9 +644,17 @@ class LiveSession:
         self._thinking = False
         return box.get("c")
 
-    def speak(self, c, p: Percept, to_group: bool = True):
+    def group_lang(self) -> str:
+        """The group's main language over the recent turns (English if unknown)."""
+        mix = self.transcript.language_mix()
+        return max(mix, key=mix.get) if mix else "en"
+
+    def speak(self, c, p: Percept, to_group: bool = True, target: str | None = None):
         from .discussion import RobotTurn, contribution_log
-        if to_group:
+        x = p.get(target) if target else None
+        if x:
+            self.look(x.location, f"{target} (answering them)")
+        elif to_group:
             self.look(self.centre(p), "the group")
         if c.kind in ("opinion", "bridge"):
             self.robot.gesture(resolve_gesture("NuruSoftNod"), blocking=False)
@@ -649,6 +666,55 @@ class LiveSession:
         self.led("idle")
         self.log.write("robot_contribution", "", contribution_log(c))
         self.transcript.add(RobotTurn(c.text, c.kind))
+        self._last_said = list(c.segments)
+        self._last_kind = c.kind
+
+    INTENT_LINES = {
+        "repeat_question": {"en": "The question is:", "sw": "Swali ni:"},
+        "previous_question": {"en": "The previous question was:", "sw": "Swali lililopita lilikuwa:"},
+        "repeat_last": {"en": "I said:", "sw": "Nilisema:"},
+        "next_question": {"en": "Next question:", "sw": "Swali linalofuata:"},
+        "no_more": {"en": "That was the last question.", "sw": "Hilo lilikuwa swali la mwisho."},
+    }
+
+    def handle_intent(self, p: Percept, brain) -> bool:
+        """Act on a request understood by the rules. Returns True if the discussion should end."""
+        from .discussion import Contribution
+        intent, who, lang = self._intent
+        self._intent = None
+        self._decided(Decision(intent, who, reason="participant asked"))
+        if intent == "end":
+            return True
+        L = self.INTENT_LINES
+        if intent == "repeat_last" and getattr(self, "_last_said", None):
+            prefix = [] if getattr(self, "_last_kind", "") == "answer" else [(lang, L["repeat_last"][lang])]
+            segs = prefix + self._last_said
+        else:
+            if intent == "next_question":
+                q, key = brain.next_question(), "next_question"
+                if q is None:
+                    self.speak(Contribution("answer", [(lang, L["no_more"][lang])], "rule"), p, target=who)
+                    return True
+            elif intent == "previous_question":
+                q, key = brain.previous_question() or brain.current_question(), "previous_question"
+            else:
+                q, key = brain.current_question(), "repeat_question"
+            segs = [(lang, L[key][lang]), ("en", q or "")]
+        self.speak(Contribution("answer", [s for s in segs if s[1]], "rule"), p, target=who)
+        return False
+
+    COUNT_WORDS_SW = {2: "wawili", 3: "watatu", 4: "wanne", 5: "watano", 6: "sita"}
+
+    def say_count(self, p: Percept):
+        """Say how many people are here now (after the number has been stable for a few seconds)."""
+        from .discussion import Contribution
+        n, lang = p.n, self.group_lang()
+        if n == 1:
+            text = {"en": "Now it's just you and me.", "sw": "Sasa tuko wawili, mimi na wewe."}[lang]
+        else:
+            text = {"en": f"Now there are {n} of you.", "sw": f"Sasa mko {self.COUNT_WORDS_SW.get(n, n)}."}[lang]
+        self._decided(Decision("count", reason=f"{n} people for a few seconds"))
+        self.speak(Contribution("count", [(lang, text)], "rule"), p)
 
     def discuss(self, p: Percept, mode: str):
         from .discussion import Brain, Contribution, plan_floor
@@ -680,6 +746,9 @@ class LiveSession:
         last_reason = None
         empty_since = None
         cur_mode = mode
+        self._intent = None
+        self.person_lang = {}
+        announced_n, count_changed = p.n, None
         while not self.stop_event.is_set():
             p = self.percept()
             if p.n == 0:                                   # faces drop out briefly: wait before giving up
@@ -709,9 +778,35 @@ class LiveSession:
                     self.log.write("decision", x.id, "returning", reason="someone left recently: no new welcome")
                     continue
                 self._decided(Decision("welcome", x.id, reason="arrived during the discussion"))
-                self.act_welcome(p, x.id)
+                self.act_welcome(p, x.id, (self.group_lang(),))
                 last_robot = time.time()
             self._drain_utterances(p)
+
+            # a request (repeat / previous / next question, didn't hear, end): answer at the next short pause
+            if self._intent and not self.listener.someone_speaking and \
+                    self._scale(self.listener.silence_s()) >= float(D.get("intent_gap_s", 0.8)):
+                if self.handle_intent(p, brain):
+                    c = self.think("close", p, brain, allow_abort=False) or None
+                    if c:
+                        self.speak(c, p)
+                    self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
+                    self.say_line("closing_solo" if p.n == 1 else "closing_group", (self.group_lang(),))
+                    return
+                last_robot = time.time()
+                continue
+
+            # say the number of people when it has changed and stayed the same for a few seconds
+            if p.n != announced_n:
+                count_changed = count_changed or time.time()
+                if self._scale(time.time() - count_changed) >= float(D.get("count_stable_s", 3.0)) and \
+                        not self.listener.someone_speaking and not self._pending_invite and \
+                        self._scale(self.listener.silence_s()) >= 1.0:
+                    self.say_count(p)
+                    announced_n, count_changed = p.n, None
+                    last_robot = time.time()
+                    continue
+            else:
+                count_changed = None
 
             # an invitation nobody answered -> gentle release (C3: never insist)
             if self._pending_invite and not self.listener.someone_speaking and \
@@ -750,13 +845,17 @@ class LiveSession:
                 continue
             if c.source == "fallback":
                 self.log.write("model_fallback", "", d.action, error=brain.last_error)
-            self.speak(c, p)
+            asker = None
+            if d.action == "respond" and "question" in d.reason:
+                last = [u for u in self.transcript.human() if u.text]
+                asker = last[-1].person if last else None
+            self.speak(c, p, target=asker)
             last_robot = time.time()
             if d.action == "close" or c.kind == "closing":
                 if c.kind == "closing":
                     self._print("PLAN", "participants want to stop -> close")
                 self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
-                self.say_line("closing_solo" if p.n == 1 else "closing_group")
+                self.say_line("closing_solo" if p.n == 1 else "closing_group", (self.group_lang(),))
                 return
 
     def wait_until_empty(self, max_s=60.0):
@@ -907,6 +1006,12 @@ DISCUSSION_SCRIPT = [
     ("pause", 10),
     ("wait_robot", 4),
     ("say", "V1", "en", "Maybe we can vote between the two places.", 3),
+    ("pause", 9),
+    ("say", "V1", "en", "Sorry, can you repeat the question?", 2.5),
+    ("pause", 7),
+    ("say", "V2", "sw", "Sikusikia vizuri, unaweza kurudia?", 3),
+    ("pause", 7),
+    ("say", "V1", "en", "I think we can end the conversation here, thank you.", 3.5),
     ("pause", 15),
 ]
 

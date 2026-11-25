@@ -205,9 +205,11 @@ How you contribute:
 one answer as the only right one. Build on what people said; credit ideas ("that point about cost...").
 - Keep it SHORT: it is spoken aloud. At most 2 sentences, at most 40 words in total.
 - End with an open question to the whole group about half of the time, not always.
-- Language: match the group. If they speak only English, answer in English; only Kiswahili, answer in \
-Kiswahili. If they have used BOTH languages, code-switch naturally like a Kenyan/Tanzanian student would: \
-at least one segment in Kiswahili and one in English. Use simple Kiswahili and simple English.
+- Language: speak in the language given as "Reply language" (the language of the person you are \
+answering, or the group's main language). Say each thing ONCE: never repeat the same content in both \
+languages. Use simple Kiswahili and simple English.
+- Stay on the topic the group is discussing NOW (see the last turns): if they are talking about one place \
+or idea (e.g. Nairobi), build on THAT. Do not bring in new places or options unless your task says you may.
 - If someone asks YOU something (e.g. to repeat the question, what you think, what you can see), answer \
 that first, directly and briefly. To repeat the question, repeat the current discussion question.
 - If the discussion has drifted from the topic, gently connect it back.
@@ -227,10 +229,11 @@ Reply with JSON only:
 Use one segment per language run, in speaking order (e.g. a Kiswahili phrase then English)."""
 
 ACTION_BRIEF = {
-    "respond": "The group just finished a few turns. React to what was said: add a balanced view, "
-               "connect two ideas, or ask a follow-up.",
-    "lull": "The group has gone quiet. Re-open the discussion: offer a fresh angle or a concrete "
-            "example on the topic, then ask an easy open question.",
+    "respond": "The group just finished a few turns. React to what was said about the place or idea they are "
+               "discussing now: add a balanced view on it, connect two of their ideas, or ask a follow-up. "
+               "Do not introduce new options.",
+    "lull": "The group has gone quiet. Re-open the discussion about what they were discussing; you may suggest "
+            "at most ONE new, concrete idea, then ask an easy open question.",
     "close": "Time is up. Summarise the main ideas you heard in at most two short sentences (max 50 words) "
              "and thank the group.",
     "opening": "Open the discussion: introduce the question below in one or two friendly sentences.",
@@ -303,6 +306,10 @@ class Brain:
         self._q_i = 0
         self.last_error = None
 
+    def previous_question(self) -> str | None:
+        qs = self.topic.get("questions", [])
+        return qs[self._q_i - 2] if 2 <= self._q_i <= len(qs) + 1 else None
+
     def next_question(self) -> str | None:
         qs = self.topic.get("questions", [])
         if self._q_i < len(qs):
@@ -311,7 +318,7 @@ class Brain:
         return None
 
     def messages(self, action: str, transcript: Transcript, n_people: int, names: dict,
-                 seen: dict | None = None) -> list:
+                 seen: dict | None = None, reply_lang: str = "en") -> list:
         qs = "\n".join(f"- {q}" for q in self.topic.get("questions", []))
         user = (f"Topic: {self.topic.get('title', '')}\n{self.topic.get('intro', '')}\n"
                 f"Discussion questions:\n{qs}\n\n"
@@ -321,7 +328,8 @@ class Brain:
                 f"{'; '.join(f'{names.get(k, k)}: {v}' for k, v in (seen or {}).items()) or 'nothing'}\n\n"
                 f"Recent discussion:\n{transcript.render(names=names)}\n\n"
                 f"Languages used recently (turns): {transcript.language_mix() or 'none yet'}; "
-                f"last speaker used: {transcript.last_lang()}\n\n"
+                f"last speaker used: {transcript.last_lang()}\n"
+                f"Reply language: {'Kiswahili' if reply_lang == 'sw' else 'English'}\n\n"
                 f"Your task now: {ACTION_BRIEF[action]}")
         return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
@@ -330,29 +338,69 @@ class Brain:
         return qs[self._q_i - 1] if 0 < self._q_i <= len(qs) else None
 
     def compose(self, action: str, transcript: Transcript, n_people: int, names: dict | None = None,
-                seen: dict | None = None) -> Contribution:
+                seen: dict | None = None, reply_lang: str | None = None) -> Contribution:
         """Always returns something sayable (model output or a scripted fallback)."""
         if self.chat is not None and self.chat.available:
-            reply = self.chat.chat(self.messages(action, transcript, n_people, names or {}, seen),
+            reply_lang = reply_lang or transcript.last_lang()
+            reply = self.chat.chat(self.messages(action, transcript, n_people, names or {}, seen, reply_lang),
                                    deadline_s=self.deadline_s)
             c = validate(extract_json(reply), max_words=60 if action == "close" else 45)
             if c:
+                c.segments = one_language(c.segments, reply_lang)
                 c.source = getattr(self.chat, "used", None) or "model"
                 return c
             self.last_error = "no reply / timeout" if reply is None else f"unusable reply: {reply[:120]!r}"
             log.warning("model contribution failed: %s", self.last_error)
-        return self.fallback(action, transcript)
+        return self.fallback(action, transcript, reply_lang)
 
-    def fallback(self, action: str, transcript: Transcript) -> Contribution:
-        lang = transcript.last_lang()
+    def fallback(self, action: str, transcript: Transcript, reply_lang: str | None = None) -> Contribution:
+        lang = reply_lang or transcript.last_lang()
         if action in ("lull", "opening"):
             q = self.next_question()
             if q:
                 return Contribution("question", [("en", q)], "fallback")
         pool = self.fb.get(action) or self.fb.get("respond") or [{"en": "Interesting. Does anyone see it differently?"}]
         line = self.rng.choice(pool)
-        segs = [(lang, line[lang])] if lang in line else [(k, v) for k, v in line.items() if k in ("sw", "en")]
+        segs = [(lang, line[lang])] if lang in line else [(k, v) for k, v in line.items() if k in ("sw", "en")][:1]
         return Contribution("bridge", segs, "fallback")
+
+
+def one_language(segments: list, lang: str) -> list:
+    """Never say the same thing twice in two languages: keep the reply-language
+    segments; if the model used only the other language, keep what it said."""
+    same = [(l, t) for l, t in segments if l == lang]
+    return same or segments
+
+
+# =============================================================================
+# Requests the robot must understand reliably (rules, English + Kiswahili).
+# Checked on every transcript before the model is involved.
+# =============================================================================
+INTENTS = [
+    ("previous_question", r"previous question|last question|question before|go back to the (last|previous)|"
+                          r"swali (lililopita|la awali|la mwanzo|lililotangulia)"),
+    ("repeat_question", r"(repeat|say again|what (was|is|'s)) (the |that |your )?question|what was the question|"
+                        r"rudia swali|swali (ni|lilikuwa|ulilouliza) (nini|gani)|swali gani"),
+    ("next_question", r"next question|another question|(let'?s|we can) move on|"
+                      r"swali (lingine|linalofuata|jingine)|tuendelee na swali"),
+    ("end", r"\b(let'?s|we can|we should|i think we can) (end|stop|finish)|end (the|this|our) (conversation|discussion|chat)|"
+            r"that'?s all( for now)?|\bgood ?bye\b|\bbye\b|kwaheri|tumalize|tumemaliza|tuishie hapa|inatosha|tusimame hapa"),
+    ("repeat_last", r"did ?n[o']?t (hear|catch|get|understand) (you|that|it|what)|(can|could) you (repeat|say that again)|"
+                    r"say (that|it) again|\bpardon\b|come again|sikusikia|sijasikia|sijaelewa|rudia|sema tena|"
+                    r"unaweza kurudia"),
+]
+
+
+def detect_intent(text: str | None) -> str | None:
+    """'repeat_question' | 'previous_question' | 'repeat_last' | 'next_question' | 'end' | None"""
+    import re
+    if not text:
+        return None
+    t = text.lower()
+    for name, pattern in INTENTS:
+        if re.search(pattern, t):
+            return name
+    return None
 
 
 def contribution_log(c: Contribution) -> str:
