@@ -523,11 +523,13 @@ class LiveSession:
         if th is not None:
             th.join(float(A.get("wait_s", 2.0)) * self.speed)
         people = box.get("people")
+        order = sorted(p.people, key=lambda x: x.location[0], reverse=bool(self.D.get("camera_flip", False)))
         if not people:
             if box.get("error"):
-                self._print("SENSE", f"appearance not available: {box['error']}")
-            return
-        order = sorted(p.people, key=lambda x: x.location[0], reverse=bool(self.D.get("camera_flip", False)))
+                self._print("SENSE", f"clothing type not available ({box['error'][:60]}) - using the laptop camera analysis")
+            people = self.local_appearance(order)
+            if not people:
+                return
         self.log.write("appearance", value={x.id: d for x, d in zip(order, people)},
                        latency_s=box.get("latency_s"))
         self._seen = {}
@@ -543,6 +545,21 @@ class LiveSession:
             self.say_line_text(greeting_line(d))
             self._pause()
         self.look(self.centre(p), "the group")
+
+    def local_appearance(self, order) -> list | None:
+        """Expression + clothing colour from the laptop camera analysis (nuru/avsd.py),
+        used when the cloud vision model is slow or unavailable. People are matched
+        to calibrated seats left-to-right, so the counts must agree."""
+        cam = getattr(self, "cam", None)
+        if cam is None or not cam.available or len(order) != len(cam.seats):
+            return None
+        seats = sorted(cam.seats, key=lambda s: cam.det.decider.seat_x[s])
+        out = []
+        for seat in seats:
+            o = cam.det.observation(seat) or {}
+            out.append({"expression": o.get("expression") or "calm", "colour": o.get("colour") or "",
+                        "clothing": "top" if o.get("colour") else ""})
+        return out if any(d["colour"] for d in out) else None
 
     def _scale(self, secs: float) -> float:
         """Real seconds -> scenario seconds (mock runs faster with speed < 1)."""
