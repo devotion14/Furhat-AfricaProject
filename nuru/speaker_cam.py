@@ -24,8 +24,8 @@ log = logging.getLogger("nuru.speaker_cam")
 
 class CameraSpeakerHint:
     def __init__(self, cfg, D: dict):
-        from .avsd import AVSDRunner
-        self.seats = list(cfg.seats)
+        from .avsd import AVSDRunner, calibrated_seats
+        self.seats = calibrated_seats(cfg.seats)      # however many chairs were calibrated (2-6)
         self.flip = bool(D.get("camera_flip", False))
         self.events = collections.deque(maxlen=4000)      # (time, seat or None)
         self._lock = threading.Lock()
@@ -58,13 +58,22 @@ class CameraSpeakerHint:
         seat, secs = max(totals.items(), key=lambda kv: kv[1])
         return seat if secs >= 0.5 * (end - start) else None
 
+    def occupied(self, within_s: float = 2.0) -> list:
+        """Calibrated seats that have a face right now, left to right."""
+        from .avsd import occupied_seats
+        return occupied_seats(dict(self.det.seat_seen_t), self.det.decider.seat_x, within_s)
+
     def person_for(self, seat: str | None, people) -> str | None:
-        """Map a camera seat to a Furhat face id by left-right order (needs equal counts)."""
-        if not seat or len(people) != len(self.seats):
+        """Map a camera seat to a Furhat face id by left-right order among the OCCUPIED
+        seats, so 3 people in 4 calibrated chairs work. Needs as many occupied seats
+        as people the robot tracks (otherwise we do not guess)."""
+        occ = self.occupied()
+        if not seat or seat not in occ or len(occ) != len(people):
             return None
-        order = sorted(self.seats, key=lambda s: self.det.decider.seat_x[s], reverse=self.flip)
+        if self.flip:
+            occ = list(reversed(occ))
         ppl = sorted(people, key=lambda x: x.location[0])
-        return ppl[order.index(seat)].id
+        return ppl[occ.index(seat)].id
 
     def stop(self):
         self.det.stop()

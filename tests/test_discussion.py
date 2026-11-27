@@ -218,3 +218,19 @@ def test_ready_during_break():
     from nuru.discussion import detect_ready
     assert detect_ready("We're ready") and detect_ready("Tuko tayari") and detect_ready("tuendelee")
     assert not detect_ready("I think the museum is better")
+
+
+def test_three_people_in_four_calibrated_chairs():
+    import threading
+    from types import SimpleNamespace
+    from nuru.avsd import occupied_seats
+    from nuru.speaker_cam import CameraSpeakerHint
+    seat_x = {"A": 0.15, "B": 0.4, "C": 0.6, "D": 0.85}
+    seen = {"A": 100.0, "C": 100.0, "D": 99.5, "B": 90.0}            # B empty for 10 s
+    assert occupied_seats(seen, seat_x, 2.0, now=100.5) == ["A", "C", "D"]
+    h = CameraSpeakerHint.__new__(CameraSpeakerHint)
+    h.flip, h._lock = False, threading.Lock()
+    h.det = SimpleNamespace(seat_seen_t=seen, decider=SimpleNamespace(seat_x=seat_x))
+    h.occupied = lambda within_s=2.0: occupied_seats(seen, seat_x, within_s, now=100.5)
+    people = [SimpleNamespace(id=i, location=(x, 0, 1)) for i, x in (("u9", 0.5), ("u3", -0.5), ("u4", 0.0))]
+    assert [h.person_for(s, people) for s in ("A", "C", "D", "B")] == ["u3", "u4", "u9", None]

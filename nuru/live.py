@@ -565,16 +565,14 @@ class LiveSession:
     def local_appearance(self, order) -> list | None:
         """Expression + clothing colour from the laptop camera analysis (nuru/avsd.py),
         used when the cloud vision model is slow or unavailable. Works for any
-        number of people: seats that currently see a face are matched to the
-        people left-to-right; one person gets the seat with the most observations."""
+        number of people: chairs that currently see a face are matched to the
+        people left-to-right (3 people in 4 calibrated chairs is fine)."""
         cam = getattr(self, "cam", None)
         if cam is None or not cam.available or not order:
             return None
-        seats = sorted(cam.seats, key=lambda s: cam.det.decider.seat_x[s])
-        obs = {s: cam.det.observation(s) for s in seats}
-        seen = [s for s in seats if obs[s]]
-        if len(order) == 1 and seen:
-            seen = [max(seen, key=lambda s: len(cam.det._obs[s]["expression"]))]
+        seen = cam.occupied(within_s=4.0)              # chairs with a face now (any group size)
+        obs = {s_: cam.det.observation(s_) for s_ in seen}
+        seen = [s_ for s_ in seen if obs[s_]]
         if len(seen) != len(order):
             self._appearance_skip = f"camera sees {len(seen)} faces in seats, {len(order)} people tracked"
             return None

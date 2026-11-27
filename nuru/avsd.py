@@ -469,6 +469,20 @@ def load_seat_x(seats):
     return default_seat_x(seats)
 
 
+def occupied_seats(seat_seen_t: dict, seat_x: dict, within_s: float = 2.0, now: float | None = None) -> list:
+    """Calibrated seats where a face was seen in the last `within_s` seconds, left to right."""
+    now = time.time() if now is None else now
+    return sorted((s for s, t in seat_seen_t.items() if now - t <= within_s), key=lambda s: seat_x[s])
+
+
+def calibrated_seats(default):
+    """Seat names in config/avsd.json (any number), else the given default."""
+    try:
+        return list(json.loads(CALIB_FILE.read_text())["seat_x"])
+    except (FileNotFoundError, KeyError, ValueError):
+        return list(default)
+
+
 def save_seat_x(seat_x):
     CALIB_FILE.parent.mkdir(parents=True, exist_ok=True)
     CALIB_FILE.write_text(json.dumps({"seat_x": seat_x}, indent=2))
@@ -518,6 +532,7 @@ class AVSDRunner:
                          "colour": collections.deque(maxlen=30)} for s in self.seats}
         self._obs_lock = threading.Lock()
         self._frame_i = 0
+        self.seat_seen_t: dict[str, float] = {}    # last time a face was seen in each seat
         self._stop = threading.Event()
         self._thread = None
         self._stream = None
@@ -628,8 +643,10 @@ class AVSDRunner:
             d = abs(self.decider.seat_x[seat] - x)
             if seat not in seen or d < seen[seat][0]:
                 seen[seat] = (d, f)
+        now = time.time()
         with self._obs_lock:
             for seat, (_d, f) in seen.items():
+                self.seat_seen_t[seat] = now
                 self._obs[seat]["expression"].append(face_expression(f))
                 if self._frame_i % 5 == 0:
                     c = clothing_colour(frame, f)

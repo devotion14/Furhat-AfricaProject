@@ -122,6 +122,18 @@ are discarded after each interaction. Tell participants this before the session.
 
 `python -m nuru live` runs the whole test by itself. Nobody needs to touch the laptop.
 
+**Group size: 1 to 4 people (works up to 6).** The robot counts people as they come and go.
+
+**Room set-up for 3–4 people:**
+- Put the chairs in a **semicircle about 1.2–1.5 m from the robot**, so that every face is inside the robot's camera view. In a straight row, the outer people fall out of view.
+- Check the camera view in the robot's web interface.
+- **Calibrate once for all the chairs** (repeat only if chairs or the robot move), with everyone sitting and facing the robot. For 4 chairs:
+  ```powershell
+  python -m nuru.avsd calibrate --furhat 192.168.1.110 --seats A B C D
+  ```
+  For 3 chairs use `--seats A B C`. If fewer people come than there are chairs, that's fine: only chairs with a face are used.
+- Install `resemblyzer` (`pip install resemblyzer`). With 3–4 voices, the basic voiceprint method confuses people much more often.
+
 ```powershell
 python -m nuru live --group G01                    # automatic 15 s breaks
 python -m nuru live --group G01 --questionnaire    # breaks wait for the questionnaire
