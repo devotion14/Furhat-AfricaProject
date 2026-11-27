@@ -147,13 +147,16 @@ class SpeakerLinker:
         return self.voice_to_person.get(voice) if voice else None
 
     def link(self, voice: str | None, present: list[str], invited: str | None = None,
-             seen: str | None = None) -> tuple[str | None, str]:
+             seen: str | None = None, away: set | None = None) -> tuple[str | None, str]:
         """Attribute an utterance with this voice to a present person.
         seen = the person whose mouth the camera saw moving (if available).
         -> (person id or None, how it was decided)."""
         known = self.voice_to_person.get(voice) if voice else None
         if known in present:
             return known, "known voice"
+        if known and known in (away or set()):
+            # the face tracker lost them for a moment; the voice still says who it is
+            return known, "known voice (briefly out of view)"
         if seen in present:
             if voice and seen not in self.voice_to_person.values():
                 self.voice_to_person[voice] = seen

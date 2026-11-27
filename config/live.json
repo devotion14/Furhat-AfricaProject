@@ -2,7 +2,7 @@
   "_comment": "Autonomous live mode (python -m nuru live). The robot senses people with its own camera and microphone, decides with the rules in nuru/live.py (plan_* functions) and acts through the cue engine in nuru/cues.py. No operator input is needed.",
   "_sense_comment": "Perception thresholds. A face must be seen for confirm_s before it counts, and missing for lost_after_s before the person counts as gone. Faces further than max_distance_m are ignored (passers-by).",
   "confirm_s": 1.0,
-  "lost_after_s": 5.0,
+  "lost_after_s": 8.0,
   "max_distance_m": 2.5,
   "engage_distance_m": 1.6,
   "_listen_comment": "Furhat ASR: we only use whether and how long someone spoke, never the words. listen_timeout_s is a hard cap on one listen call.",
@@ -97,7 +97,7 @@
     "absent_grace_s": 6.0,
     "returning_s": 30.0,
     "intent_gap_s": 0.8,
-    "count_stable_s": 3.0,
+    "count_stable_s": 8.0,
     "_gaze_comment": "While listening: look at the speaker, nod every nod_every_s; after gaze_cooldown_s on the speakers glance at the quietest person for glance_s.",
     "gaze_cooldown_s": 30.0,
     "glance_s": 1.5,
@@ -255,16 +255,14 @@
     "wait_s": 6.0
   },
   "vision": {
-    "_comment": "Vision model for appearance. Tested 20 Nov 2026: MiniMax-M3.1-Flash ~1.2 s (Groq had no working vision model).",
+    "_comment": "Vision model for appearance (clothing type). MiniMax-M3.1-Flash needs its thinking on: reasoning_effort low (~1.5 s, tested 27 Nov). thinking.type=disabled is rejected for this model.",
     "provider": "minimax",
     "base_url": "https://api.minimax.io/v1",
     "model": "MiniMax-M3.1-Flash",
     "timeout_s": 10.0,
     "json_mode": false,
     "extra": {
-      "thinking": {
-        "type": "disabled"
-      }
+      "reasoning_effort": "low"
     }
   },
   "led_discussion": {

@@ -602,7 +602,9 @@ class LiveSession:
                 seen = None
                 if self.cam is not None and self.cam.available:
                     seen = self.cam.person_for(self.cam.seat_during(u.start, u.end), p.people)
-                u.person, u.how = self.linker.link(u.voice, present, invited, seen=seen)
+                away = {pid for pid, t in getattr(self, "_left_at", {}).items()
+                        if self._scale(time.time() - t) < float(self.D.get("returning_s", 30.0))}
+                u.person, u.how = self.linker.link(u.voice, present, invited, seen=seen, away=away)
             self.transcript.add(u)
             who = u.person or f"voice {u.voice or '?'}"
             said = u.text if u.text else "(words not recognised)"

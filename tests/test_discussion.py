@@ -234,3 +234,12 @@ def test_three_people_in_four_calibrated_chairs():
     h.occupied = lambda within_s=2.0: occupied_seats(seen, seat_x, within_s, now=100.5)
     people = [SimpleNamespace(id=i, location=(x, 0, 1)) for i, x in (("u9", 0.5), ("u3", -0.5), ("u4", 0.0))]
     assert [h.person_for(s, people) for s in ("A", "C", "D", "B")] == ["u3", "u4", "u9", None]
+
+
+def test_voice_stays_with_person_briefly_out_of_view():
+    l = SpeakerLinker()
+    assert l.link("V1", ["u0"])[0] == "u0"                               # only person present
+    # u0 drops out of the tracker for a moment; u2 is the only one visible
+    assert l.link("V1", ["u2"], away={"u0"}) == ("u0", "known voice (briefly out of view)")
+    assert l.voice_to_person["V1"] == "u0"
+    assert l.link("V2", ["u2"], away={"u0"})[0] == "u2"
