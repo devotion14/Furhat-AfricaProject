@@ -45,14 +45,15 @@ class EventLog:
         self.task = ""
         self.tail: list[dict] = []
 
-    def write(self, event: str, seat: str = "", value="", **extra):
+    def write(self, event: str, seat: str = "", value="", at: float | None = None, **extra):
+        """at = when it happened (default now), e.g. the start of an utterance heard earlier."""
         if extra:
             value = json.dumps({"value": value, **extra}, ensure_ascii=False) if value != "" else json.dumps(extra, ensure_ascii=False)
         elif isinstance(value, (dict, list)):
             value = json.dumps(value, ensure_ascii=False)
         else:
             value = str(value)
-        now = time.time()
+        now = time.time() if at is None else at
         row = {"t": f"{now:.3f}", "t_rel": f"{now - self._t0:.3f}", "group": self.group,
                "condition": self.condition, "task": self.task, "event": event,
                "seat": seat or "", "value": value}

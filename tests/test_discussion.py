@@ -204,3 +204,17 @@ def test_face_memory_recognises_returning_people():
     # a stranger is new, and someone present cannot be matched
     assert m.assign("user-6", np.array([0, 0, 1.0]), ["user-5", "user-1"]) == ("new", None)
     assert m.assign("user-7", b, ["user-1"]) == ("new", None)
+
+
+def test_c1_invites_in_turn_c2_c3_invite_the_quiet():
+    rr = {"policy": "round_robin"}
+    s = state(heard_s={"p1": 2, "p2": 40}, next_in_turn="p2")
+    d = plan_floor(s, rr)
+    assert (d.action, d.target) == ("invite", "p2")              # C1 ignores who is quiet
+    assert plan_floor(state(heard_s={"p1": 2, "p2": 40}, next_in_turn="p2")).target == "p1"   # C2/C3
+
+
+def test_ready_during_break():
+    from nuru.discussion import detect_ready
+    assert detect_ready("We're ready") and detect_ready("Tuko tayari") and detect_ready("tuendelee")
+    assert not detect_ready("I think the museum is better")

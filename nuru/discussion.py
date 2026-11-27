@@ -127,6 +127,7 @@ class FloorState:
     last_invited: str | None = None
     robot_turns_since_human: int = 0  # robot contributions nobody has answered yet
     last_is_question: bool = False    # the last human turn asked something (often of the robot)
+    next_in_turn: str | None = None   # C1: next person in fixed order
     unattributed_s: float = 0.0       # speech we could not yet link to a face
 
 
@@ -177,7 +178,14 @@ def plan_floor(s: FloorState, rules: dict | None = None) -> FloorDecision:
         return FloorDecision("wait", reason=f"turn may not be over ({s.silence_s:.1f} s < {R['turn_gap_s']} s)")
     if s.elapsed_s >= R["duration_s"]:
         return FloorDecision("close", reason="discussion time is up")
-    q = quiet_person(s, R)
+    if R.get("policy") == "round_robin":
+        # C1 non-adaptive: invite the next person in turn on a fixed schedule, ignoring participation
+        q = s.next_in_turn if (len(s.present) >= 2 and s.elapsed_s >= R["quiet_after_s"]) else None
+        if q and s.since_invite_s >= R["invite_gap_s"] and s.since_robot_s >= 4.0:
+            return FloorDecision("invite", q, reason=f"next in turn (non-adaptive)")
+        q = None
+    else:
+        q = quiet_person(s, R)
     if q and s.since_invite_s >= R["invite_gap_s"] and s.since_robot_s >= 4.0:
         return FloorDecision("invite", q, reason=f"{q} heard {s.heard_s.get(q, 0):.0f} s of "
                                                   f"{sum(s.heard_s.values()):.0f} s total")
@@ -401,6 +409,15 @@ def detect_intent(text: str | None) -> str | None:
         if re.search(pattern, t):
             return name
     return None
+
+
+READY = r"\b(we'?re|we are|i'?m|i am) ready\b|\bready\b|tuko tayari|niko tayari|\btayari\b|tumemaliza|nimemaliza|let'?s (continue|go|start)|tuendelee|tuanze"
+
+
+def detect_ready(text: str | None) -> bool:
+    """During a break: did someone say they are ready to continue?"""
+    import re
+    return bool(text) and re.search(READY, text.lower()) is not None
 
 
 def contribution_log(c: Contribution) -> str:

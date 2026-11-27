@@ -14,6 +14,28 @@
   "group_profile": "c3",
   "_interaction_comment": "What happens after the greeting. 'discussion' = the robot listens to the whole conversation, follows it in English and Kiswahili, contributes balanced opinions and invites quiet people (needs keys in config/keys.json; without them it still runs with scripted lines). 'questions' = Celestine's original Lab 1 flow (ask, listen, acknowledge; words are never used).",
   "interaction": "discussion",
+  "_sessions_comment": "The study: one 5-minute discussion per condition, in this order, each with its own topic. C1 = next person in turn, plain cues; C2 = quietest person, plain cues; C3 = quietest person, Nuru cues (config/profiles.json). Override with: python -m nuru live --conditions c3 c1 c2",
+  "sessions": [
+    {
+      "condition": "c1",
+      "task": "T1"
+    },
+    {
+      "condition": "c2",
+      "task": "T2"
+    },
+    {
+      "condition": "c3",
+      "task": "T3"
+    }
+  ],
+  "questionnaire": false,
+  "break": {
+    "_comment": "Between sessions. Automatic: break_s seconds (Enter or 'we are ready' skips). With --questionnaire: wait until 'we are ready' / Enter (max questionnaire_max_s). If everyone leaves, wait rejoin_wait_s before ending.",
+    "break_s": 15,
+    "questionnaire_max_s": 900,
+    "rejoin_wait_s": 60
+  },
   "discussion": {
     "_comment": "Floor rules decide WHEN the robot speaks (nuru/discussion.py plan_floor); the model only decides WHAT. Times are seconds.",
     "task": "T2",
@@ -167,6 +189,26 @@
     "welcome_back": {
       "sw": "Karibu tena!",
       "en": "Welcome back!"
+    },
+    "break": {
+      "sw": "Tupumzike kidogo. Tutaendelea baada ya muda mfupi.",
+      "en": "Let's take a short break. We will continue in fifteen seconds."
+    },
+    "questionnaire": {
+      "sw": "Tupumzike. Tafadhali jazeni dodoso, kisha mniambie mkiwa tayari.",
+      "en": "Let's take a break. Please fill in the questionnaire, and tell me when you are ready."
+    },
+    "next_session": {
+      "sw": "Karibuni tena! Tuanze mada inayofuata.",
+      "en": "Welcome back! Let's start the next topic."
+    },
+    "waiting": {
+      "sw": "Nitawasubiri kwa dakika moja.",
+      "en": "I will wait for you for one minute."
+    },
+    "resume": {
+      "sw": "Karibuni tena, tuendelee.",
+      "en": "Welcome back, let's continue."
     }
   },
   "llm": {
@@ -246,6 +288,11 @@
       12,
       12,
       12
+    ],
+    "break": [
+      90,
+      60,
+      0
     ]
   },
   "pauses": {

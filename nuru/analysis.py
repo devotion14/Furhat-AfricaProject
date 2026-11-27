@@ -104,7 +104,7 @@ def session_measures(rows: list[dict]) -> list[dict]:
 
     out = []
     for b in blocks:
-        ids = seats or sorted(set(b["time"]) | set(b["turns"]))
+        ids = sorted(set(seats) | set(b["time"]) | set(b["turns"]))   # silent people count as 0
         tm = [b["time"][s] for s in ids]
         tn = [b["turns"][s] for s in ids]
         tot_t, tot_n = sum(tm), sum(tn)

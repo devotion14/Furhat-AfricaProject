@@ -113,14 +113,26 @@ def cmd_live(args, cfg):
             return 1
     if args.questions or (args.mock and args.scenario != "discussion"):
         cfg.live["interaction"] = "questions"          # Lab 1 flow (scripted mock scenarios use it)
-    sess = LiveSession(cfg, robot, speed=args.speed if args.mock else 1.0)
+    if args.questionnaire:
+        cfg.live["questionnaire"] = True
+    if args.conditions:
+        tasks = list(cfg.tasks["tasks"])
+        bad = [c for c in args.conditions if c.lower() not in cfg.profiles]
+        if bad:
+            sys.exit(f"Unknown condition(s) {bad}; choose from {list(cfg.profiles)}")
+        cfg.live["sessions"] = [{"condition": c.lower(), "task": tasks[i % len(tasks)]}
+                                for i, c in enumerate(args.conditions)]
+    if args.minutes:
+        cfg.live.setdefault("discussion", {}).setdefault("rules", {})["duration_s"] = args.minutes * 60
+    sess = LiveSession(cfg, robot, speed=args.speed if args.mock else 1.0, group=args.group.upper())
     if args.mock:
         print(f"MOCK scenario '{args.scenario}' (camera and microphone are scripted)")
         if args.scenario == "discussion":
             from .live import play_discussion
             from .listener import MockListener
             cfg.live["interaction"] = "discussion"
-            cfg.live.setdefault("discussion", {}).setdefault("rules", {})["duration_s"] = 150
+            if not args.minutes:
+                cfg.live.setdefault("discussion", {}).setdefault("rules", {})["duration_s"] = 70
             listener = MockListener(lambda u: sess._utt_q.put(u), speed=args.speed)
             sess.setup_discussion(listener)
             sess.appearance_override = [{"expression": "smiling", "colour": "blue", "clothing": "hoodie"},
@@ -507,6 +519,11 @@ def main(argv=None):
                     help="with --mock: discussion | solo | group | newcomer | far | failures")
     sp.add_argument("--questions", action="store_true",
                     help="use the Lab 1 question flow instead of the listening discussion")
+    sp.add_argument("--group", default="LIVE", help="group id for the log, e.g. G03")
+    sp.add_argument("--conditions", nargs="+", help="session order, e.g. c1 c2 c3 (default from live.json)")
+    sp.add_argument("--minutes", type=float, help="length of each session (default 5)")
+    sp.add_argument("--questionnaire", action="store_true",
+                    help="breaks wait for the questionnaire: until someone says 'we are ready' or Enter")
     sp.add_argument("--speed", type=float, default=0.5, help="with --mock: <1 runs faster")
     sp.add_argument("--max", type=int, help="stop after this many interactions")
     sp = robot_args(sub.add_parser("panel"))

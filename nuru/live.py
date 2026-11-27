@@ -130,7 +130,7 @@ def plan_after_listen(status: str, mode: str, attempt: int, invited: bool) -> De
 # =============================================================================
 class LiveSession:
     def __init__(self, cfg, robot, sense: PeopleTracker | None = None, seed: int | None = None,
-                 verbose: bool = True, speed: float = 1.0):
+                 verbose: bool = True, speed: float = 1.0, group: str = "LIVE"):
         self.cfg, self.robot = cfg, robot
         self.L = cfg.live
         self.rng = random.Random(seed)
@@ -139,7 +139,8 @@ class LiveSession:
         self.sense = sense or PeopleTracker(robot, confirm_s=self.L.get("confirm_s", 1.0),
                                             lost_after_s=self.L.get("lost_after_s", 3.0),
                                             max_distance_m=self.L.get("max_distance_m", 2.5))
-        self.log = EventLog(cfg.log_dir, "LIVE")
+        self.log = EventLog(cfg.log_dir, group)
+        self._enter = threading.Event()
         self.stop_event = threading.Event()
         self.mem = Memory()
         self.last: Percept = Percept(time.time())
@@ -192,6 +193,8 @@ class LiveSession:
                 state = "robot_talking"
             elif getattr(self, "_thinking", False):
                 state = "thinking"
+            elif getattr(self, "_on_break", False):
+                state = "break"
             elif self.listener.someone_speaking:
                 state = "human_talking"
             else:
@@ -298,7 +301,7 @@ class LiveSession:
         centre = self.centre(p)
         self.mem.invited.append(pid)
         self.led("attention")
-        self.log.write("invite", pid, "live", policy="least_heard")
+        self.log.write("invite", pid, "live", policy=profile.get("policy", "least_active"))
         if profile.get("group_glance_s", 0) > 0:
             self.look(centre, "the group (group glance)")
             self._sleep(profile["group_glance_s"])
@@ -402,8 +405,8 @@ class LiveSession:
         self._print("PLAN", f"=== interaction {self.n_sessions} starts in {mode.upper()} mode ===")
         self.act_greet(p, mode)
         if self.L.get("interaction") == "discussion" and getattr(self, "listener", None) is not None:
-            self.discuss(p, mode)
-            self.log.write("interaction_end", value={"heard_s": self.mem.heard_s, "invited": self.mem.invited})
+            self.run_sessions(p, mode)
+            self.log.write("interaction_end")
             return
         task = self.cfg.tasks["tasks"][self.L.get("task", "T3")]
         self.look(self.centre(p), "")
@@ -611,8 +614,14 @@ class LiveSession:
                            voice=u.voice, lang=u.lang, duration_s=round(self._scale(u.duration), 2), how=u.how)
             if u.person:
                 self.mem.heard_s[u.person] = self.mem.heard_s.get(u.person, 0.0) + self._scale(u.duration)
+                if invited and u.person == invited and self._pending_invite:
+                    self.log.write("response", u.person, round(self._scale(u.start - self._pending_invite[1]), 2))
                 if u.text and u.lang in ("en", "sw"):
                     self.person_lang[u.person] = u.lang
+            who_id = u.person or (f"voice-{u.voice}" if u.voice else "")
+            if who_id:                                     # speaking turns for python -m nuru analyze
+                self.log.write("speak_start", who_id, at=u.start)
+                self.log.write("speak_stop", who_id, at=u.end)
             from .discussion import detect_intent
             intent = detect_intent(u.text)
             if intent:
@@ -644,7 +653,16 @@ class LiveSession:
             last_invited=self.mem.invited[-1] if self.mem.invited else None,
             robot_turns_since_human=self.transcript.robot_turns_since_human(),
             unattributed_s=self._scale(self.transcript.unattributed_s()),
-            last_is_question=self.transcript.last_is_question())
+            last_is_question=self.transcript.last_is_question(),
+            next_in_turn=self._next_in_turn(p))
+
+    def _next_in_turn(self, p: Percept) -> str | None:
+        """C1 (non-adaptive): the next person left-to-right after the last one invited."""
+        order = [x.id for x in sorted(p.people, key=lambda x: x.location[0])]
+        if not order:
+            return None
+        last = self.mem.invited[-1] if self.mem.invited else None
+        return order[(order.index(last) + 1) % len(order)] if last in order else order[0]
 
     def _seen_text(self, p: Percept) -> dict:
         seen = getattr(self, "_seen", {})
@@ -791,7 +809,8 @@ class LiveSession:
         elif self._scale(self.listener.silence_s()) >= 3.0 and g["target"] != "group":
             self.look(self.centre(p))
             g["target"] = "group"
-        if p.n >= 2 and g["on_speakers_s"] >= float(D.get("gaze_cooldown_s", 30.0)):
+        adaptive = (getattr(self, "condition_prof", None) or {}).get("policy") != "round_robin"
+        if adaptive and p.n >= 2 and g["on_speakers_s"] >= float(D.get("gaze_cooldown_s", 30.0)):
             heard = self.mem.heard_s
             quiet = min((x for x in p.people if x.id != g["target"]),
                         key=lambda x: heard.get(x.id, 0.0), default=None)
@@ -849,7 +868,10 @@ class LiveSession:
         self._decided(Decision("count", reason=f"{n} people for a few seconds"))
         self.speak(Contribution("count", [(lang, text)], "rule"), p)
 
-    def discuss(self, p: Percept, mode: str):
+    def discuss(self, p: Percept, mode: str, condition: str = "c3", task_id: str | None = None,
+                first: bool = True) -> str:
+        """One discussion session in one study condition. Returns 'done' (time up or the group
+        asked to end) or 'left' (everyone left and did not come back within rejoin_wait_s)."""
         from .discussion import Brain, Contribution, plan_floor
         D = self.D
 
@@ -858,17 +880,31 @@ class LiveSession:
             if n == 1:
                 r.update(D.get("solo_rules", {}))
             return r
-        task = self.cfg.tasks["tasks"][D.get("task", self.L.get("task", "T3"))]
+        task_id = task_id or D.get("task", self.L.get("task", "T3"))
+        task = self.cfg.tasks["tasks"][task_id]
         brain = Brain(self.chat, task, D.get("fallback_lines", {}), self.rng, float(D.get("model_deadline_s", 8.0)))
-        group_prof = self.cfg.profile(self.L.get("group_profile", "c3"))
-        while not self._utt_q.empty():                 # forget anything heard before the greeting
+        group_prof = self.cfg.profile(condition)
+        self.condition_prof = group_prof
+        policy = group_prof.get("policy", "least_active")
+        while not self._utt_q.empty():                 # forget anything heard before this session
             self._utt_q.get_nowait()
-        if self.bank is not None:
-            self.bank.reset()
-        self.linker.reset()
+        if first:                                      # voices/faces carry over between sessions
+            if self.bank is not None:
+                self.bank.reset()
+            self.linker.reset()
         self.transcript.items.clear()
+        self.mem.heard_s, self.mem.invited = {}, []    # participation is measured per condition
+        self.log.condition, self.log.task = condition, task_id
+        # participants of this session (people present count as 0 s if they never speak)
+        self.log.write("session_start", value={"mode": "live", "seats": [x.id for x in p.people]})
+        self.log.write("condition_start", value={"profile": group_prof.get("label"), "task": task_id})
+        self._print("PLAN", f"=== session: {group_prof.get('label', condition)}  |  {task_id}: {task.get('title', '')} ===")
 
-        self.greet_individually(p)
+        if first:
+            self.greet_individually(p)
+        else:
+            self.say_line("next_session", (self.group_lang(),))
+            self._pause()
         # opening: the task intro and first question are scripted (reliable, no model latency)
         self.look(self.centre(p), "the group")
         self.say_line_text(task["intro"])
@@ -880,7 +916,8 @@ class LiveSession:
         empty_since = None
         cur_mode = mode
         self._intent = None
-        self.person_lang = {}
+        if first:
+            self.person_lang = {}
         self._face_result, face_asked = {}, {}
         self._gaze = {"t": time.time(), "target": None, "on_speakers_s": 0.0, "last_nod": time.time(),
                       "next_nod_s": 6.0, "glance_until": 0.0}
@@ -891,8 +928,12 @@ class LiveSession:
             if p.n == 0:                                   # faces drop out briefly: wait before giving up
                 empty_since = empty_since or time.time()
                 if self._scale(time.time() - empty_since) >= float(D.get("absent_grace_s", 6.0)):
-                    self._decided(Decision("farewell", reason="everyone left"))
-                    return
+                    if not self.wait_for_return():
+                        self._end_condition(condition)
+                        return "left"
+                    empty_since = None
+                    last_robot = time.time()
+                    continue
                 self._drain_utterances(p)
                 self._sleep(0.25)
                 continue
@@ -948,8 +989,8 @@ class LiveSession:
                     if c:
                         self.speak(c, p)
                     self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
-                    self.say_line("closing_solo" if p.n == 1 else "closing_group", (self.group_lang(),))
-                    return
+                    self._end_condition(condition)
+                    return "done"
                 last_robot = time.time()
                 continue
 
@@ -980,6 +1021,7 @@ class LiveSession:
             if self._pending_invite:                   # waiting for the invitee: keep the floor open
                 self._sleep(0.25)
                 continue
+            rules["policy"] = policy
             d = plan_floor(self._floor_state(p, t0, last_robot, last_invite), rules)
             if d.action == "wait":
                 if d.reason != last_reason and "speaking" not in d.reason:
@@ -1014,8 +1056,98 @@ class LiveSession:
                 if c.kind == "closing":
                     self._print("PLAN", "participants want to stop -> close")
                 self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
-                self.say_line("closing_solo" if p.n == 1 else "closing_group", (self.group_lang(),))
+                self._end_condition(condition)
+                return "done"
+        self._end_condition(condition)
+        return "done"
+
+    def _end_condition(self, condition):
+        self.log.write("metrics", "", {"heard_s": {k: round(v, 1) for k, v in self.mem.heard_s.items()},
+                                       "invited": self.mem.invited})
+        self.log.write("condition_end")
+        self.log.condition = self.log.task = ""
+
+    def run_sessions(self, p: Percept, mode: str):
+        """The study: one session per condition (default C1 -> C2 -> C3, each with its own
+        topic), with a break in between. Greeting + personal hello only at the start."""
+        sessions = self.L.get("sessions") or [{"condition": "c3", "task": self.D.get("task", "T3")}]
+        for i, sess in enumerate(sessions):
+            if i > 0:
+                if self.take_break(i, len(sessions)) == "left":
+                    break
+                p = self.percept()
+                if p.n == 0:
+                    break
+            if self.discuss(p, mode, sess["condition"], sess.get("task"), first=(i == 0)) == "left":
                 return
+            if self.stop_event.is_set():
+                return
+        p = self.percept()
+        if p.n:
+            self.look(self.centre(p), "everyone")
+            self.robot.gesture(CUSTOM_GESTURES["NuruSoftNod"])
+            self.say_line("closing_solo" if p.n == 1 else "closing_group", (self.group_lang(),))
+
+    def take_break(self, i: int, total: int) -> str:
+        """Between sessions. Automatic: say it, wait break_s (or until someone says
+        'we're ready' / the operator presses Enter). --questionnaire: wait until ready."""
+        from .discussion import detect_ready
+        B = self.L.get("break", {})
+        q = bool(self.L.get("questionnaire"))
+        lang = self.group_lang()
+        self._on_break = True
+        self.log.write("break_start", value={"after_session": i, "questionnaire": q})
+        self._print("PLAN", f"--- break before session {i + 1}/{total} ({'questionnaire' if q else str(B.get('break_s', 15)) + ' s'}) ---")
+        p = self.percept()
+        if p.n:
+            self.look(self.centre(p), "the group")
+        self.say_line("questionnaire" if q else "break", (lang,))
+        self._enter.clear()
+        limit = float(B.get("questionnaire_max_s", 900) if q else B.get("break_s", 15))
+        t0, empty_since, result = time.time(), None, "ok"
+        while not self.stop_event.is_set() and self._scale(time.time() - t0) < limit:
+            if self._enter.is_set():
+                self._print("PLAN", "operator pressed Enter -> continue")
+                break
+            ready = False
+            while not self._utt_q.empty():             # only listen for "we're ready" during the break
+                u = self._utt_q.get_nowait()
+                if detect_ready(u.text):
+                    ready = True
+            if ready:
+                self._print("PLAN", "group said they are ready -> continue")
+                break
+            p = self.percept()
+            if p.n == 0:
+                empty_since = empty_since or time.time()
+                if self._scale(time.time() - empty_since) >= float(B.get("rejoin_wait_s", 60)):
+                    result = "left"
+                    break
+            else:
+                empty_since = None
+            self._sleep(0.25)
+        self._on_break = False
+        self.log.write("break_end", value=result)
+        return result
+
+    def wait_for_return(self) -> bool:
+        """Everyone left mid-session: say so, wait up to rejoin_wait_s for someone to come back."""
+        B = self.L.get("break", {})
+        wait_s = float(B.get("rejoin_wait_s", 60))
+        self._decided(Decision("wait_for_return", reason=f"everyone left - waiting up to {wait_s:.0f} s"))
+        self.say_line("waiting", (self.group_lang(),))
+        t0 = time.time()
+        while not self.stop_event.is_set() and self._scale(time.time() - t0) < wait_s:
+            p = self.percept()
+            if p.n:
+                self._sleep(1.0)                        # let them sit down
+                p = self.percept()
+                self.look(self.centre(p), "the group")
+                self.say_line("resume", (self.group_lang(),))
+                return True
+            self._sleep(0.5)
+        self._decided(Decision("farewell", reason=f"nobody came back within {wait_s:.0f} s"))
+        return False
 
     def wait_until_empty(self, max_s=60.0):
         """After an interaction, do not re-greet the same people: wait until they leave."""
@@ -1038,6 +1170,17 @@ class LiveSession:
                 log.exception("discussion setup failed")
                 self._print("ERROR", f"discussion mode unavailable ({e}) - using the question flow")
                 self.L = {**self.L, "interaction": "questions"}
+        if self.L.get("interaction") == "discussion":
+            plan = " -> ".join(f"{s['condition'].upper()}/{s.get('task')}" for s in self.L.get("sessions", []))
+            brk = "questionnaire (Enter or 'we are ready')" if self.L.get("questionnaire") else \
+                f"{self.L.get('break', {}).get('break_s', 15)} s break (Enter skips)"
+            self._print("INFO", f"sessions: {plan}  |  {brk}")
+            import sys
+            if sys.stdin and sys.stdin.isatty():
+                def watch_enter():
+                    for _ in sys.stdin:
+                        self._enter.set()
+                threading.Thread(target=watch_enter, daemon=True, name="nuru-enter").start()
         self._print("INFO", "live mode: waiting for people (Ctrl+C to stop)")
         self.log.write("session_start", value={"mode": "live"})
         try:
