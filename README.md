@@ -118,6 +118,89 @@ are discarded after each interaction. Tell participants this before the session.
 
 ---
 
+## Running a group test (3 sessions: C1 -> C2 -> C3)
+
+`python -m nuru live` runs the whole test by itself. Nobody needs to touch the laptop.
+
+```powershell
+python -m nuru live --group G01                    # automatic 15 s breaks
+python -m nuru live --group G01 --questionnaire    # breaks wait for the questionnaire
+```
+
+| Step | What the robot does | Length |
+|---|---|---|
+| Arrival | Notices people, greets the group ("Habari zenu! Karibuni…"), then greets each person by clothing and expression | ~30 s |
+| **Session 1: C1, topic T1** | Discussion. Invites the **next person in turn** with **plain English cues** (looks at them for 3 s, "What do you think?") | 5 min |
+| Break | "Let's take a short break…" | 15 s, or until the questionnaire is done |
+| **Session 2: C2, topic T2** | "Welcome back! Let's start the next topic." Invites the **quietest person** with the **same plain cues** | 5 min |
+| Break | as above | |
+| **Session 3: C3, topic T3** | Invites the **quietest person** with the **Nuru cues**: glance at the group, then the pair, a short look with a soft nod and smile, a bilingual prompt ("Je, una maoni? What do you think?"), looks back at the group, never insists ("Hakuna shida") | 5 min |
+| Closing | Summary and thanks | |
+
+**What stays the same in all three sessions:**
+- It listens without interrupting and contributes balanced opinions in the language being used.
+- It answers questions put to it, and looks at and nods to whoever is speaking.
+- It understands "repeat the question", "I didn't hear", "next question", "let's end" (which ends the current session) and "we're ready" (which ends a break).
+
+The only differences are the ones the study tests:
+- **C1 vs C2: adaptivity.** Who is invited: the next in turn, or the quietest.
+- **C2 vs C3: cultural adaptation.** How they are invited: plain cues, or Nuru cues.
+
+In C2 and C3 the robot also glances briefly at the quietest person after 30 s on the active speakers.
+
+**Topics** ([config/tasks.json](config/tasks.json)):
+
+| Topic | Introduction | Questions the robot can ask |
+|---|---|---|
+| T1 School water project | Your school has received money for one project to improve access to clean water. | Which project, and why? · Who in the community should be involved? · What problems might it face? · How would you know after a year that it worked? |
+| T2 Planning a class trip | Your class can go on a one-day trip anywhere within your country. | Where, and why? · What should students learn? · How can it be affordable for every family? · What rules should the class agree on? |
+| T3 A better school library | Your school wants more students to use its library. | What would make students visit more? · Which books or materials first? · Books in local languages: why or why not? · How could older students help younger ones read? |
+
+**Breaks:**
+- **Automatic (default):** 15 s. Saying "we're ready" / "tuko tayari" or pressing Enter skips the break.
+- **`--questionnaire`:** "Please fill in the questionnaire, and tell me when you are ready." The robot waits until someone says "we're ready" / "tuko tayari" or the operator presses Enter (at most 15 min). Use this mode for real study groups.
+- **If everyone leaves:** the robot says it will wait for one minute. It continues if they come back, and ends otherwise.
+
+**Other options:** `--conditions c2 c3 c1` (a different order, e.g. from `python -m nuru plan`), `--minutes 3`.
+
+### For the questionnaires
+- **Give one post-session questionnaire after each session (C1, C2, C3), and one final questionnaire at the end.** Use `--questionnaire` so the robot waits.
+- **Label each sheet with the group id (e.g. G01) and the condition (c1/c2/c3)**, so the answers can be matched to the log.
+- **The existing Likert items (1–7)** from [docs/STUDY_PROTOCOL.md](docs/STUDY_PROTOCOL.md) fit these sessions:
+
+  | Code | Statement |
+  |---|---|
+  | `fair_attention` | The robot shared its attention fairly among us. |
+  | `felt_invited` | I felt invited to share my ideas. |
+  | `felt_pressured` | I felt pressured to speak. |
+  | `singled_out` | I felt singled out by the robot. |
+  | `appropriate` | The robot's behaviour was appropriate for a classroom I know. |
+  | `comfortable` | I felt comfortable with how the robot looked at me. |
+  | `respectful` | The robot was respectful. |
+- **Behaviours you may also want to ask about** (they are the same in all sessions, so they belong in the final questionnaire):
+  - being greeted by clothing and expression;
+  - the robot's own opinions;
+  - its English/Kiswahili switching;
+  - the LED colours (green = someone talking, pink = robot talking, blue = thinking, amber = break);
+  - being recognised after leaving and coming back;
+  - whether it ever interrupted.
+- **Entering the answers:** copy `data/questionnaire_template.csv` to `data/questionnaire.csv`, with one row per person, condition and item. Then `python -m nuru analyze logs/ --questionnaire data/questionnaire.csv` adds the answers to the report.
+- **What the log measures automatically (per session):**
+  - speaking time and turns per person, and how equal they are (Gini);
+  - the share of the least active person;
+  - invitations, the response rate, the response latency and voluntary turns;
+  - for the full study, the C1 vs C2 and C2 vs C3 comparisons.
+
+  Run it with `python -m nuru analyze logs/`.
+- **What leaves the laptop (tell participants):**
+  - audio clips of each utterance (Groq, for transcription);
+  - camera snapshots (MiniMax, for clothing);
+  - the transcript text (Groq/MiniMax, for the robot's replies).
+
+  Face and voice signatures stay on the laptop, in memory only, and are deleted when the program stops.
+
+---
+
 ## Automatic sessions and speaker detection
 
 Nuru can work out by itself who is speaking, using **Furhat's own camera and microphone**. No extra
