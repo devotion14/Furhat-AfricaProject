@@ -539,6 +539,9 @@ class LiveSession:
                 self._print("SENSE", f"clothing type not available ({box['error'][:60]}) - using the laptop camera analysis")
             people = self.local_appearance(order)
             if not people:
+                why = box.get("error") or getattr(self, "_appearance_skip", "no camera analysis")
+                self._print("SENSE", f"no personal hello: {why}")
+                self.log.write("appearance_skipped", "", why)
                 return
         self.log.write("appearance", value={x.id: d for x, d in zip(order, people)},
                        latency_s=box.get("latency_s"))
@@ -558,18 +561,26 @@ class LiveSession:
 
     def local_appearance(self, order) -> list | None:
         """Expression + clothing colour from the laptop camera analysis (nuru/avsd.py),
-        used when the cloud vision model is slow or unavailable. People are matched
-        to calibrated seats left-to-right, so the counts must agree."""
+        used when the cloud vision model is slow or unavailable. Works for any
+        number of people: seats that currently see a face are matched to the
+        people left-to-right; one person gets the seat with the most observations."""
         cam = getattr(self, "cam", None)
-        if cam is None or not cam.available or len(order) != len(cam.seats):
+        if cam is None or not cam.available or not order:
             return None
         seats = sorted(cam.seats, key=lambda s: cam.det.decider.seat_x[s])
+        obs = {s: cam.det.observation(s) for s in seats}
+        seen = [s for s in seats if obs[s]]
+        if len(order) == 1 and seen:
+            seen = [max(seen, key=lambda s: len(cam.det._obs[s]["expression"]))]
+        if len(seen) != len(order):
+            self._appearance_skip = f"camera sees {len(seen)} faces in seats, {len(order)} people tracked"
+            return None
         out = []
-        for seat in seats:
-            o = cam.det.observation(seat) or {}
+        for seat in seen:
+            o = obs[seat]
             out.append({"expression": o.get("expression") or "calm", "colour": o.get("colour") or "",
                         "clothing": "top" if o.get("colour") else ""})
-        return out if any(d["colour"] for d in out) else None
+        return out
 
     def _scale(self, secs: float) -> float:
         """Real seconds -> scenario seconds (mock runs faster with speed < 1)."""

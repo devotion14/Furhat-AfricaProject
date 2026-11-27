@@ -210,7 +210,7 @@
     "_comment": "Expression, clothing colour and type from one camera snapshot at the start (nuru/appearance.py). mention: 'greeting' = address each person once after the group greeting; 'never' = only log it. Snapshot is not stored.",
     "enabled": true,
     "mention": "greeting",
-    "wait_s": 4.0
+    "wait_s": 6.0
   },
   "vision": {
     "_comment": "Vision model for appearance. Tested 20 Nov 2026: MiniMax-M3.1-Flash ~1.2 s (Groq had no working vision model).",
